@@ -17,35 +17,49 @@
  */
 package org.tomahawk.libtomahawk.infosystem;
 
+import org.jdeferred.DoneCallback;
+import org.jdeferred.FailCallback;
+import org.jdeferred.Promise;
+import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
+import org.tomahawk.libtomahawk.authentication.HatchetAuthenticatorUtils;
 import org.tomahawk.libtomahawk.collection.Album;
+import org.tomahawk.libtomahawk.collection.AlphaComparable;
 import org.tomahawk.libtomahawk.collection.Artist;
+import org.tomahawk.libtomahawk.collection.Cacheable;
 import org.tomahawk.libtomahawk.collection.Image;
 import org.tomahawk.libtomahawk.collection.Playlist;
-import org.tomahawk.libtomahawk.collection.TomahawkListItemComparator;
+import org.tomahawk.libtomahawk.collection.PlaylistEntry;
 import org.tomahawk.libtomahawk.resolver.Query;
+import org.tomahawk.libtomahawk.utils.ADeferredObject;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
-
-import android.util.SparseArray;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class User implements TomahawkListItem {
+public class User extends Cacheable implements AlphaComparable {
 
-    public static final String PLAYLIST_PLAYBACKLOG_ID = "_playbackLog";
+    private static User mSelf = new User("self");
 
-    public static final String PLAYLIST_FAVORTIES_ID = "_favorites";
+    static {
+        mSelf.setName("Myself");
+        mSelf.setIsOffline(true);
+    }
 
-    private static final ConcurrentHashMap<String, User> sUsers
-            = new ConcurrentHashMap<>();
+    private static final String PLAYLIST_PLAYBACKLOG_ID = "_playbackLog";
 
-    private final String mId;
+    private static final String PLAYLIST_FAVORITES_ID = "_favorites";
+
+    private static final String PLAYLIST_SOCIALACTIONS_ID = "_socialActions";
+
+    private static final String PLAYLIST_FRIENDSFEED_ID = "_friendsfeed";
+
+    private String mId;
 
     private String mName;
 
@@ -53,9 +67,9 @@ public class User implements TomahawkListItem {
 
     private String mAbout;
 
-    private int mFollowCount;
+    private int mFollowCount = -1;
 
-    private int mFollowersCount;
+    private int mFollowersCount = -1;
 
     private Query mNowPlaying;
 
@@ -63,13 +77,23 @@ public class User implements TomahawkListItem {
 
     private int mTotalPlays;
 
-    private final SparseArray<List<SocialAction>> mSocialActions = new SparseArray<>();
+    private final TreeMap<Date, List<SocialAction>> mSocialActions = new TreeMap<>();
 
-    private final SparseArray<List<SocialAction>> mFriendsFeed = new SparseArray<>();
+    private final TreeMap<Date, List<SocialAction>> mFriendsFeed = new TreeMap<>();
 
-    private final Playlist mPlaybackLog;
+    private Date mSocialActionsNextDate = new Date();
 
-    private final Playlist mFavorites;
+    private Date mFriendsFeedNextDate = new Date();
+
+    private Playlist mSocialActionsPlaylist;
+
+    private Playlist mFriendsFeedPlaylist;
+
+    private final Map<SocialAction, PlaylistEntry> mPlaylistEntryMap = new HashMap<>();
+
+    private Playlist mPlaybackLog;
+
+    private Playlist mFavorites;
 
     private TreeMap<User, String> mFollowings;
 
@@ -77,15 +101,25 @@ public class User implements TomahawkListItem {
 
     private List<Album> mStarredAlbums = new ArrayList<>();
 
+    private List<Artist> mStarredArtists = new ArrayList<>();
+
     private List<Playlist> mPlaylists;
+
+    private boolean mIsOffline;
+
+    private Map<Object, String> mRelationshipIds = new ConcurrentHashMap<>();
 
     /**
      * Construct a new {@link User} with the given id
      */
     private User(String id) {
+        super(User.class, id);
+
         mId = id;
-        mPlaybackLog = Playlist.get(id + User.PLAYLIST_PLAYBACKLOG_ID, "", "");
-        mFavorites = Playlist.get(id + User.PLAYLIST_FAVORTIES_ID, "", "");
+        mPlaybackLog = Playlist.fromEmptyList(id + User.PLAYLIST_PLAYBACKLOG_ID, "");
+        mFavorites = Playlist.fromEmptyList(id + User.PLAYLIST_FAVORITES_ID, "");
+        mSocialActionsPlaylist = Playlist.fromEmptyList(id + User.PLAYLIST_SOCIALACTIONS_ID, "");
+        mFriendsFeedPlaylist = Playlist.fromEmptyList(id + User.PLAYLIST_FRIENDSFEED_ID, "");
     }
 
     /**
@@ -95,44 +129,59 @@ public class User implements TomahawkListItem {
      * @return {@link User} with the given id
      */
     public static User get(String id) {
-        User user = new User(id);
-        if (!sUsers.containsKey(user.getId())) {
-            sUsers.put(user.getId(), user);
-        }
-        return sUsers.get(user.getId());
+        Cacheable cacheable = get(User.class, id);
+        return cacheable != null ? (User) cacheable : new User(id);
     }
 
     public static User getUserById(String id) {
-        return sUsers.get(id);
+        return (User) get(User.class, id);
     }
 
-    /**
-     * @return A {@link java.util.List} of all {@link User}s
-     */
-    public static ArrayList<User> getUsers() {
-        ArrayList<User> users = new ArrayList<>(sUsers.values());
-        Collections.sort(users,
-                new TomahawkListItemComparator(TomahawkListItemComparator.COMPARE_ALPHA));
-        return users;
+    public static Promise<User, Throwable, Void> getSelf() {
+        final ADeferredObject<User, Throwable, Void> deferred = new ADeferredObject<>();
+        final HatchetAuthenticatorUtils authUtils = (HatchetAuthenticatorUtils) AuthenticatorManager
+                .get().getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
+        authUtils.getUserId().done(new DoneCallback<String>() {
+            @Override
+            public void onDone(String result) {
+                mSelf.setName(authUtils.getUserName());
+                mSelf.setId(result);
+                mSelf.setIsOffline(false);
+                deferred.resolve(mSelf);
+            }
+        }).fail(new FailCallback<Throwable>() {
+            @Override
+            public void onFail(Throwable result) {
+                deferred.resolve(mSelf);
+            }
+        });
+        return deferred;
     }
 
-    @Override
-    public String getCacheKey() {
-        return mId;
+    public void putRelationShipId(Object object, String relationShipId) {
+        mRelationshipIds.put(object, relationShipId);
     }
 
-    /**
-     * @return this object's name
-     */
-    @Override
-    public String toString() {
-        return mName;
+    public String getRelationShipId(Object object) {
+        return mRelationshipIds.get(object);
+    }
+
+    public boolean isOffline() {
+        return mIsOffline;
+    }
+
+    public void setIsOffline(boolean isOffline) {
+        mIsOffline = isOffline;
+    }
+
+    private void setId(String id) {
+        mId = id;
+        put(User.class, id, this);
     }
 
     /**
      * @return this object' name
      */
-    @Override
     public String getName() {
         return mName;
     }
@@ -145,22 +194,6 @@ public class User implements TomahawkListItem {
                 TomahawkApp.getContext().getString(R.string.users_favorites_suffix, name));
     }
 
-    @Override
-    public Artist getArtist() {
-        return null;
-    }
-
-    @Override
-    public Album getAlbum() {
-        return null;
-    }
-
-    @Override
-    public ArrayList<Query> getQueries() {
-        return mPlaybackLog.getQueries();
-    }
-
-    @Override
     public Image getImage() {
         return mImage;
     }
@@ -221,28 +254,87 @@ public class User implements TomahawkListItem {
         mTotalPlays = totalPlays;
     }
 
-    public SparseArray<List<SocialAction>> getSocialActions() {
+    public TreeMap<Date, List<SocialAction>> getSocialActions() {
         return mSocialActions;
     }
 
-    public void setSocialActions(ArrayList<SocialAction> socialActions, int pageNumber) {
-        mSocialActions.put(pageNumber, socialActions);
+    public void setSocialActions(List<SocialAction> socialActions, Date date) {
+        if (socialActions != null && socialActions.size() > 0) {
+            mSocialActions.put(date, socialActions);
+            SocialAction socialAction = socialActions.get(socialActions.size() - 1);
+            if (socialAction != null) {
+                if (socialAction.getDate().getTime() < date.getTime()) {
+                    mSocialActionsNextDate = socialAction.getDate();
+                }
+            }
+            fillPlaylist(mSocialActionsPlaylist, mSocialActions);
+        }
     }
 
-    public SparseArray<List<SocialAction>> getFriendsFeed() {
+    public Date getSocialActionsNextDate() {
+        return mSocialActionsNextDate;
+    }
+
+    public TreeMap<Date, List<SocialAction>> getFriendsFeed() {
         return mFriendsFeed;
     }
 
-    public void setFriendsFeed(ArrayList<SocialAction> friendsFeed, int pageNumber) {
-        mFriendsFeed.put(pageNumber, friendsFeed);
+    public void setFriendsFeed(List<SocialAction> friendsFeed, Date date) {
+        if (friendsFeed != null && friendsFeed.size() > 0) {
+            mFriendsFeed.put(date, friendsFeed);
+            SocialAction socialAction = friendsFeed.get(friendsFeed.size() - 1);
+            if (socialAction != null) {
+                if (socialAction.getDate().getTime() < date.getTime()) {
+                    mFriendsFeedNextDate = socialAction.getDate();
+                }
+            }
+            fillPlaylist(mFriendsFeedPlaylist, mFriendsFeed);
+        }
+    }
+
+    public Date getFriendsFeedNextDate() {
+        return mFriendsFeedNextDate;
+    }
+
+    public Playlist getSocialActionsPlaylist() {
+        return mSocialActionsPlaylist;
+    }
+
+    public Playlist getFriendsFeedPlaylist() {
+        return mFriendsFeedPlaylist;
+    }
+
+    private void fillPlaylist(Playlist playlist, TreeMap<Date, List<SocialAction>> actions) {
+        playlist.clear();
+        for (Date date : actions.keySet()) {
+            for (SocialAction action : actions.get(date)) {
+                if (action.getTargetObject() instanceof Query) {
+                    Query query = (Query) action.getTargetObject();
+                    PlaylistEntry entry = playlist.addQuery(playlist.size(), query);
+                    mPlaylistEntryMap.put(action, entry);
+                }
+            }
+        }
+    }
+
+    public PlaylistEntry getPlaylistEntry(SocialAction item) {
+        return mPlaylistEntryMap.get(item);
     }
 
     public Playlist getPlaybackLog() {
         return mPlaybackLog;
     }
 
+    public void setPlaybackLog(Playlist playbackLog) {
+        mPlaybackLog = playbackLog;
+    }
+
     public Playlist getFavorites() {
         return mFavorites;
+    }
+
+    public void setFavorites(Playlist favorites) {
+        mFavorites = favorites;
     }
 
     public TreeMap<User, String> getFollowings() {
@@ -267,6 +359,15 @@ public class User implements TomahawkListItem {
 
     public void setStarredAlbums(List<Album> starredAlbums) {
         mStarredAlbums = starredAlbums;
+    }
+
+    public List<Artist> getStarredArtists() {
+        return mStarredArtists;
+    }
+
+    public void setStarredArtists(
+            List<Artist> starredArtists) {
+        mStarredArtists = starredArtists;
     }
 
     public List<Playlist> getPlaylists() {

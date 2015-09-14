@@ -489,6 +489,28 @@
                 <data android:pathPattern=".*\\.xspf" />
                 <data android:pathPattern=".*\\.XSPF" />
             </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+
+                <data android:scheme="file"/>
+                <data android:scheme="http"/>
+                <data android:scheme="https"/>
+                <data android:host="*"/>
+                <data android:pathPattern=".*\\.axe"/>
+                <data android:pathPattern=".*\\..*\\.axe"/>
+                <data android:pathPattern=".*\\..*\\..*\\.axe"/>
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.axe"/>
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.axe"/>
+                <data android:pathPattern=".*\\.AXE"/>
+                <data android:pathPattern=".*\\..*\\.AXE"/>
+                <data android:pathPattern=".*\\..*\\..*\\.AXE"/>
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.AXE"/>
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.AXE"/>
+            </intent-filter>
         </activity>
 
         <activity android:name=".activities.WebViewActivity"

@@ -18,18 +18,20 @@
 package org.tomahawk.libtomahawk.resolver;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+
+import com.squareup.okhttp.Response;
 
 import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
 import org.tomahawk.libtomahawk.authentication.AuthenticatorUtils;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverAccessTokenResult;
-import org.tomahawk.libtomahawk.resolver.models.ScriptResolverAppKeysResult;
-import org.tomahawk.libtomahawk.resolver.models.ScriptResolverCollectionMetaData;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverConfigUi;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverSettings;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverStreamUrlResult;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverUrlResult;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ImageUtils;
+import org.tomahawk.libtomahawk.utils.NetworkUtils;
+import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.utils.WeakReferenceHandler;
 
@@ -38,11 +40,8 @@ import android.os.Message;
 import android.util.Log;
 import android.widget.ImageView;
 
-import java.io.File;
 import java.io.IOException;
 import java.math.BigInteger;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -74,7 +73,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
 
     private boolean mEnabled;
 
-    private boolean mReady;
+    private boolean mInitialized;
 
     private boolean mStopped;
 
@@ -87,10 +86,6 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
     private boolean mUrlLookup;
 
     private boolean mConfigTestable;
-
-    private FuzzyIndex mFuzzyIndex;
-
-    private String mFuzzyIndexPath;
 
     private static final int TIMEOUT_HANDLER_MSG = 1337;
 
@@ -128,38 +123,29 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
                 }
             }
         }
-        mReady = false;
+        mInitialized = false;
         mStopped = true;
         mId = mScriptAccount.getMetaData().pluginName;
         if (getConfig().get(ScriptAccount.ENABLED_KEY) != null) {
             mEnabled = (Boolean) getConfig().get(ScriptAccount.ENABLED_KEY);
         } else {
             if (TomahawkApp.PLUGINNAME_JAMENDO.equals(mId)
-                    || TomahawkApp.PLUGINNAME_OFFICIALFM.equals(mId)
                     || TomahawkApp.PLUGINNAME_SOUNDCLOUD.equals(mId)) {
                 setEnabled(true);
             } else {
                 setEnabled(false);
             }
         }
-        mFuzzyIndexPath = TomahawkApp.getContext().getFilesDir().getAbsolutePath()
-                + File.separator + getId() + ".lucene";
-        FuzzyIndex fuzzyIndex = new FuzzyIndex();
-        if (fuzzyIndex.create(mFuzzyIndexPath, false)) {
-            Log.d(TAG, "Found a fuzzy index at: " + mFuzzyIndexPath);
-            mFuzzyIndex = fuzzyIndex;
-        } else {
-            Log.d(TAG, "Didn't find a fuzzy index");
-        }
-        resolverInit();
+        settings();
+        init();
     }
 
     /**
      * @return whether or not this {@link Resolver} is ready
      */
     @Override
-    public boolean isReady() {
-        return mReady;
+    public boolean isInitialized() {
+        return mInitialized;
     }
 
     /**
@@ -167,28 +153,29 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
      */
     @Override
     public boolean isResolving() {
-        return mReady && !mStopped;
+        return mInitialized && !mStopped;
     }
 
     @Override
     public void loadIcon(ImageView imageView, boolean grayOut) {
-        TomahawkUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
-                "file:///android_asset/" + mScriptAccount.getPath() + "/content/"
-                        + mScriptAccount.getMetaData().manifest.icon, grayOut);
+        ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
+                mScriptAccount.getPath() + "/content/" + mScriptAccount.getMetaData().manifest.icon,
+                grayOut ? R.color.disabled_resolver : 0);
     }
 
     @Override
     public void loadIconWhite(ImageView imageView) {
-        TomahawkUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
-                "file:///android_asset/" + mScriptAccount.getPath() + "/content/"
-                        + mScriptAccount.getMetaData().manifest.iconWhite);
+        ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
+                mScriptAccount.getPath() + "/content/" + mScriptAccount
+                        .getMetaData().manifest.iconWhite);
     }
 
     @Override
     public void loadIconBackground(ImageView imageView, boolean grayOut) {
-        TomahawkUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
-                "file:///android_asset/" + mScriptAccount.getPath() + "/content/"
-                        + mScriptAccount.getMetaData().manifest.iconBackground, grayOut);
+        ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
+                mScriptAccount.getPath() + "/content/" + mScriptAccount
+                        .getMetaData().manifest.iconBackground,
+                grayOut ? R.color.disabled_resolver : 0);
     }
 
     @Override
@@ -214,12 +201,19 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
     /**
      * This method calls the js function resolver.init().
      */
-    private void resolverInit() {
+    private void init() {
         ScriptJob.start(mScriptObject, "init", new ScriptJob.ResultsEmptyCallback() {
             @Override
             public void onReportResults() {
-                resolverSettings();
-                collection();
+                mInitialized = true;
+                Log.d(TAG, "ScriptResolver " + mId + " initialized successfully.");
+                PipeLine.get().onResolverInitialized(ScriptResolver.this);
+            }
+        }, new ScriptJob.FailureCallback() {
+            @Override
+            public void onReportFailure(String errormessage) {
+                Log.d(TAG, "ScriptResolver " + mId + " failed to initialize.");
+                PipeLine.get().onResolverInitialized(ScriptResolver.this);
             }
         });
     }
@@ -227,7 +221,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
     /**
      * This method tries to get the {@link Resolver}'s settings.
      */
-    private void resolverSettings() {
+    private void settings() {
         ScriptJob.start(mScriptObject, "settings",
                 new ScriptJob.ResultsCallback<ScriptResolverSettings>(
                         ScriptResolverSettings.class) {
@@ -235,8 +229,6 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
                     public void onReportResults(ScriptResolverSettings results) {
                         mWeight = results.weight;
                         mTimeout = results.timeout * 1000;
-                        mReady = true;
-                        PipeLine.getInstance().onResolverReady(ScriptResolver.this);
                         resolverGetConfigUi();
                     }
                 });
@@ -245,7 +237,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
     /**
      * This method tries to save the {@link Resolver}'s UserConfig.
      */
-    public void resolverSaveUserConfig() {
+    public void saveUserConfig() {
         ScriptJob.start(mScriptObject, "saveUserConfig");
     }
 
@@ -281,31 +273,6 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
                 });
     }
 
-    public void collection() {
-        ScriptJob.start(mScriptObject, "collection",
-                new ScriptJob.ResultsCallback<ScriptResolverCollectionMetaData>(
-                        ScriptResolverCollectionMetaData.class) {
-                    public void onReportResults(ScriptResolverCollectionMetaData results) {
-                        mScriptAccount.mCollectionMetaData = results;
-                        String iconPath = mScriptAccount.mCollectionMetaData.iconfile;
-                        if (iconPath != null) {
-                            int lastSlash =
-                                    mScriptAccount.getMetaData().manifest.main.lastIndexOf("/");
-                            String mainPath = mScriptAccount.getMetaData().manifest.main
-                                    .substring(0, lastSlash);
-                            while (iconPath.contains("../")) {
-                                iconPath = iconPath.replace("../", "");
-                                lastSlash = mainPath.lastIndexOf("/");
-                                mainPath = mainPath.substring(0, lastSlash);
-                            }
-                            mScriptAccount.mCollectionIconPath = "file:///android_asset/"
-                                    + mScriptAccount.getPath() + "/content/" + mainPath + "/"
-                                    + iconPath;
-                        }
-                    }
-                });
-    }
-
     /**
      * Invoke the javascript to resolve the given {@link Query}.
      *
@@ -314,7 +281,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
      */
     @Override
     public boolean resolve(final Query query) {
-        if (mReady) {
+        if (mInitialized) {
             mStopped = false;
             mTimeOutHandler.removeCallbacksAndMessages(null);
             mTimeOutHandler.sendEmptyMessageDelayed(TIMEOUT_HANDLER_MSG, mTimeout);
@@ -324,7 +291,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
                 public void onReportResults(JsonArray results) {
                     ArrayList<Result> parsedResults =
                             ScriptUtils.parseResultList(ScriptResolver.this, results);
-                    PipeLine.getInstance().reportResults(query, parsedResults, mId);
+                    PipeLine.get().reportResults(query, parsedResults, mId);
                     mTimeOutHandler.removeCallbacksAndMessages(null);
                     mStopped = true;
                 }
@@ -342,7 +309,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
                 ScriptJob.start(mScriptObject, "resolve", args, callback);
             }
         }
-        return mReady;
+        return mInitialized;
     }
 
     public void getStreamUrl(final Result result) {
@@ -358,15 +325,16 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
                                 PipeLine.StreamUrlEvent event = new PipeLine.StreamUrlEvent();
                                 event.mResult = result;
                                 if (results.headers != null) {
-                                    // If headers are given we first have to resolve the url that the call
-                                    // is being redirected to
-                                    event.mUrl = TomahawkUtils.getRedirectedUrl(results.url,
-                                            results.headers);
+                                    // If headers are given we first have to resolve the url that
+                                    // the call is being redirected to
+                                    Response connection = NetworkUtils.httpRequest("GET",
+                                            results.url, results.headers, null, null, null, false);
+                                    event.mUrl = connection.header("Location");
                                 } else {
                                     event.mUrl = results.url;
                                 }
                                 EventBus.getDefault().post(event);
-                            } catch (IOException | NoSuchAlgorithmException | KeyManagementException e) {
+                            } catch (IOException e) {
                                 Log.e(TAG, "reportStreamUrl: " + e.getClass() + ": " + e
                                         .getLocalizedMessage());
                             }
@@ -432,7 +400,7 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
 
     @Override
     public boolean isEnabled() {
-        AuthenticatorUtils utils = AuthenticatorManager.getInstance().getAuthenticatorUtils(mId);
+        AuthenticatorUtils utils = AuthenticatorManager.get().getAuthenticatorUtils(mId);
         if (utils != null) {
             return utils.isLoggedIn();
         }
@@ -487,33 +455,20 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
         return mConfigTestable;
     }
 
-    public boolean hasFuzzyIndex() {
-        return mFuzzyIndex != null;
-    }
-
-    public FuzzyIndex getFuzzyIndex() {
-        return mFuzzyIndex;
-    }
-
-    public void createFuzzyIndex() {
-        if (mFuzzyIndex != null) {
-            mFuzzyIndex.close();
-        }
-        FuzzyIndex fuzzyIndex = new FuzzyIndex();
-        if (fuzzyIndex.create(mFuzzyIndexPath, true)) {
-            mFuzzyIndex = fuzzyIndex;
-        }
-    }
-
     public void testConfig(Map<String, Object> config) {
-        ScriptJob.start(mScriptObject, "testConfig", config, new ScriptJob.ResultsObjectCallback() {
-            @Override
-            public void onReportResults(JsonObject results) {
-                int type = ScriptUtils.getNodeChildAsInt(results, "result");
-                String message = ScriptUtils.getNodeChildAsText(results, "message");
-                onConfigTestResult(type, message);
-            }
-        });
+        ScriptJob.start(mScriptObject, "testConfig", config,
+                new ScriptJob.ResultsPrimitiveCallback() {
+                    @Override
+                    public void onReportResults(JsonPrimitive results) {
+                        if (results.isString()) {
+                            onConfigTestResult(AuthenticatorManager.CONFIG_TEST_RESULT_TYPE_OTHER,
+                                    results.getAsString());
+                        } else if (results.isNumber()
+                                && results.getAsInt() > 0 && results.getAsInt() < 8) {
+                            onConfigTestResult(results.getAsInt(), null);
+                        }
+                    }
+                });
     }
 
     public void onConfigTestResult(final int type, final String message) {
@@ -535,9 +490,5 @@ public class ScriptResolver implements Resolver, ScriptPlugin {
 
     public void getAccessToken(ScriptJob.ResultsCallback<ScriptResolverAccessTokenResult> cb) {
         ScriptJob.start(mScriptObject, "getAccessToken", cb);
-    }
-
-    public void getAppKeys(ScriptJob.ResultsCallback<ScriptResolverAppKeysResult> cb) {
-        ScriptJob.start(mScriptObject, "getAppKeys", cb);
     }
 }

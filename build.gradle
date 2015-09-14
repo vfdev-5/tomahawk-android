@@ -19,29 +19,27 @@ repositories {
 
 dependencies {
     compile files("libs/RemoteMetadataProvider.jar")
-    compile 'com.android.support:multidex:1.0.0'
-    compile "com.android.support:appcompat-v7:22.1.1"
-    compile "com.android.support:support-v4:22.1.1"
-    compile 'com.android.support:recyclerview-v7:22.0.0'
-    compile 'com.android.support:gridlayout-v7:22.0.0'
+    compile "com.android.support:appcompat-v7:22.2.1"
+    compile "com.android.support:support-v4:22.2.1"
     compile "se.emilsjolander:stickylistheaders:2.4.1"
     compile("ch.acra:acra:4.5.0") {
         transitive = false
     }
     compile "com.google.code.gson:gson:2.3.1"
+    compile 'com.google.android.gms:play-services-base:7.5.0'
     compile('com.stanfy:gson-xml-java:0.1.7') {
         exclude group: 'xmlpull', module: 'xmlpull'
     }
-    compile "com.google.guava:guava:18.0"
     compile "com.squareup.picasso:picasso:2.4.0"
-    compile "com.squareup.okhttp:okhttp:2.1.0"
-    compile "com.squareup.okhttp:okhttp-urlconnection:2.1.0"
+    compile "com.squareup.okhttp:okhttp:2.5.0"
+    compile "com.squareup.okhttp:okhttp-urlconnection:2.5.0"
     compile "com.github.castorflex.smoothprogressbar:library:1.0.0"
     compile "de.mrmaffen:vlc-android-sdk:1.0.6"
     compile "de.mrmaffen:holocircularprogressbar:1.0.1"
     compile "org.apache.lucene:lucene-core:4.7.2"
     compile "org.apache.lucene:lucene-analyzers-common:4.7.2"
     compile "org.apache.lucene:lucene-queryparser:4.7.2"
+    compile "commons-io:commons-io:2.4"
     compile "net.sourceforge.findbugs:jsr305:1.3.7"
     compile "com.squareup.retrofit:retrofit:1.8.0"
     compile 'com.sothree.slidinguppanel:library:2.0.3'
@@ -50,15 +48,19 @@ dependencies {
     }
     compile 'de.greenrobot:eventbus:2.4.0'
     compile "com.daimajia.swipelayout:library:1.1.8@aar"
+    compile "org.jdeferred:jdeferred-android-aar:1.2.4"
+    compile "org.slf4j:slf4j-android:1.7.12"
+    compile 'com.github.rahatarmanahmed:circularprogressview:2.3.2'
 }
 
 /*
  * Gets the version name from the latest Git tag
  */
 def getNewVersionName = { ->
-    boolean isChanged = 'git diff --cached'.execute().text.length() > 0 ||
-            'git diff'.execute().text.length() > 0
-    return 'git describe --tags'.execute().text.replace('\n', '') + (isChanged ? "_modified" : "")
+    boolean isChanged = 'git diff --cached'.execute([], projectDir).text.length() > 0 ||
+            'git diff'.execute([], projectDir).text.length() > 0
+    return 'git describe --tags'.execute([], projectDir).text.replace('\n', '') +
+            (isChanged ? "_modified" : "")
 }
 
 android {
@@ -72,7 +74,6 @@ android {
         renderscriptSupportModeEnabled true
         versionName '0.83'
         versionCode 830
-        multiDexEnabled true
     }
 
     lintOptions {
@@ -144,21 +145,21 @@ android {
                 abiFilter "x86"
             }
             versionName getNewVersionName() + "_x86"
-            versionCode Integer.parseInt("6" + defaultConfig.versionCode)
+            versionCode Integer.parseInt("6$defaultConfig.versionCode")
         }
         armv7a {
             ndk {
                 abiFilter "armeabi-v7a"
             }
             versionName getNewVersionName() + "_armv7a"
-            versionCode Integer.parseInt("2" + defaultConfig.versionCode)
+            versionCode Integer.parseInt("2$defaultConfig.versionCode")
         }
         arm {
             ndk {
                 abiFilter "armeabi"
             }
             versionName getNewVersionName() + "_arm"
-            versionCode Integer.parseInt("1" + defaultConfig.versionCode)
+            versionCode Integer.parseInt("1$defaultConfig.versionCode")
         }
     }
 }

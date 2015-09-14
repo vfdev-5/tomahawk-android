@@ -17,19 +17,24 @@
  */
 package org.tomahawk.libtomahawk.resolver;
 
+import org.tomahawk.libtomahawk.collection.Collection;
+import org.tomahawk.libtomahawk.collection.CollectionManager;
+import org.tomahawk.libtomahawk.collection.DbCollection;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverUrlResult;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.utils.ThreadManager;
 import org.tomahawk.tomahawk_android.utils.TomahawkRunnable;
 
-import android.os.Handler;
 import android.text.TextUtils;
 import android.util.Log;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import de.greenrobot.event.EventBus;
 
@@ -83,56 +88,100 @@ public class PipeLine {
 
     }
 
-    private final HashSet<ScriptAccount> mScriptAccounts = new HashSet<>();
+    private final Set<ScriptAccount> mScriptAccounts =
+            Collections.newSetFromMap(new ConcurrentHashMap<ScriptAccount, Boolean>());
 
-    private final HashSet<Resolver> mResolvers = new HashSet<>();
+    private final Set<Resolver> mResolvers =
+            Collections.newSetFromMap(new ConcurrentHashMap<Resolver, Boolean>());
 
-    private final HashSet<String> mRecentUrlLookups = new HashSet<>();
+    private final Set<String> mWaitingUrlLookups =
+            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    private final Set<Query> mWaitingQueries = Collections
+            .newSetFromMap(new ConcurrentHashMap<Query, Boolean>());
+
+    private final Set<ScriptAccount> mLoadingPlugins = Collections
+            .newSetFromMap(new ConcurrentHashMap<ScriptAccount, Boolean>());
+
+    private final Set<Resolver> mInitializingResolvers = Collections
+            .newSetFromMap(new ConcurrentHashMap<Resolver, Boolean>());
 
     private PipeLine() {
         try {
             String[] plugins = TomahawkApp.getContext().getAssets().list("js/resolvers");
             for (String plugin : plugins) {
-                String path = "js/resolvers/" + plugin;
-                mScriptAccounts.add(new ScriptAccount(path));
+                String path = "/js/resolvers/" + plugin;
+                ScriptAccount account = new ScriptAccount(path, false);
+                mScriptAccounts.add(account);
+                mLoadingPlugins.add(account);
+            }
+            String manualResolverDirPath = TomahawkApp.getContext().getFilesDir().getAbsolutePath()
+                    + File.separator + "manualresolvers";
+            File manualResolverDir = new File(manualResolverDirPath);
+            plugins = manualResolverDir.list();
+            if (plugins != null) {
+                for (String plugin : plugins) {
+                    if (!plugin.equals(".temp")) {
+                        String pluginPath = manualResolverDirPath + File.separator + plugin;
+                        File pluginFile = new File(pluginPath);
+                        if (pluginFile.isDirectory()) {
+                            ScriptAccount account = new ScriptAccount(pluginPath, false);
+                            mScriptAccounts.add(account);
+                            mLoadingPlugins.add(account);
+                        }
+                    }
+                }
             }
         } catch (IOException e) {
             Log.e(TAG, "PipeLine<init>: " + e.getClass() + ": " + e.getLocalizedMessage());
         }
-        addResolver(new DataBaseResolver());
     }
 
-    public static PipeLine getInstance() {
+    public static PipeLine get() {
         return Holder.instance;
     }
 
-    public void onResolverReady(ScriptResolver resolver) {
-        EventBus.getDefault().post(new ResolversChangedEvent());
-        for (String url : mRecentUrlLookups) {
-            if (resolver.hasUrlLookup()) {
-                resolver.lookupUrl(url);
+    public void onPluginLoaded(ScriptAccount account) {
+        mLoadingPlugins.remove(account);
+    }
+
+    public void onResolverInitialized(ScriptResolver resolver) {
+        mInitializingResolvers.remove(resolver);
+        checkWaitingJobs();
+    }
+
+    private synchronized void checkWaitingJobs() {
+        if (mLoadingPlugins.isEmpty() && mInitializingResolvers.isEmpty()) {
+            Log.d(TAG, "All plugins loaded. All resolvers initialized. Resolving "
+                    + mWaitingQueries.size() + " waiting queries. Looking up "
+                    + mWaitingUrlLookups.size() + " waiting URLs.");
+            for (Query query : mWaitingQueries) {
+                resolve(query);
             }
+            mWaitingQueries.clear();
+            for (String url : mWaitingUrlLookups) {
+                lookupUrl(url);
+            }
+            mWaitingUrlLookups.clear();
         }
     }
 
-    /**
-     * @return whether or not every Resolver in this PipeLine is ready to resolve queries
-     */
-    public boolean isEveryResolverReady() {
-        for (Resolver r : mResolvers) {
-            if (!r.isReady()) {
-                return false;
-            }
-        }
-        return true;
+    public void addScriptAccount(ScriptAccount scriptAccount) {
+        mScriptAccounts.add(scriptAccount);
+        mLoadingPlugins.add(scriptAccount);
     }
 
     public void addResolver(Resolver resolver) {
         mResolvers.add(resolver);
+        if (!resolver.isInitialized()) {
+            mInitializingResolvers.add(resolver);
+        }
+        EventBus.getDefault().post(new ResolversChangedEvent());
     }
 
     public void removeResolver(Resolver resolver) {
         mResolvers.remove(resolver);
+        EventBus.getDefault().post(new ResolversChangedEvent());
     }
 
     /**
@@ -195,10 +244,8 @@ public class PipeLine {
         final TomahawkRunnable r = new TomahawkRunnable(TomahawkRunnable.PRIORITY_IS_RESOLVING) {
             @Override
             public void run() {
-                if (!forceOnlyLocal && q.isSolved()) {
-                    ResultsEvent event = new ResultsEvent();
-                    event.mQuery = q;
-                    EventBus.getDefault().post(event);
+                if (!mLoadingPlugins.isEmpty() || !mInitializingResolvers.isEmpty()) {
+                    mWaitingQueries.add(q);
                 } else {
                     for (Resolver resolver : mResolvers) {
                         if (shouldResolve(resolver, q, forceOnlyLocal)) {
@@ -206,9 +253,16 @@ public class PipeLine {
                         }
                     }
                 }
+                if (!forceOnlyLocal && !q.isOnlyLocal()) {
+                    for (Collection collection : CollectionManager.get().getCollections()) {
+                        if (collection instanceof DbCollection) {
+                            ((DbCollection) collection).resolve(q);
+                        }
+                    }
+                }
             }
         };
-        ThreadManager.getInstance().execute(r, q);
+        ThreadManager.get().execute(r, q);
         return q;
     }
 
@@ -223,7 +277,7 @@ public class PipeLine {
             } else {
                 return true;
             }
-        } else if (resolver instanceof DataBaseResolver) {
+        } else if (resolver instanceof UserCollectionStubResolver) {
             return true;
         }
         return false;
@@ -245,9 +299,7 @@ public class PipeLine {
         HashSet<Query> queryKeys = new HashSet<>();
         if (queries != null) {
             for (Query query : queries) {
-                if (forceOnlyLocal || !query.isSolved()) {
-                    queryKeys.add(resolve(query, forceOnlyLocal));
-                }
+                queryKeys.add(resolve(query, forceOnlyLocal));
             }
         }
         return queryKeys;
@@ -274,7 +326,7 @@ public class PipeLine {
         } else {
             priority = TomahawkRunnable.PRIORITY_IS_REPORTING;
         }
-        ThreadManager.getInstance().execute(
+        ThreadManager.get().execute(
                 new TomahawkRunnable(priority) {
                     @Override
                     public void run() {
@@ -290,9 +342,6 @@ public class PipeLine {
                             ResultsEvent event = new ResultsEvent();
                             event.mQuery = query;
                             EventBus.getDefault().post(event);
-                            if (query.isSolved()) {
-                                ThreadManager.getInstance().stop(query);
-                            }
                         }
                     }
                 }
@@ -301,20 +350,15 @@ public class PipeLine {
 
     public void lookupUrl(final String url) {
         Log.d(TAG, "lookupUrl - looking up url: " + url);
-        mRecentUrlLookups.add(url);
-        // Remove the url from mRecentUrlLookups after 30s
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                mRecentUrlLookups.remove(url);
-            }
-        }, 30000);
-
-        for (Resolver resolver : mResolvers) {
-            if (resolver instanceof ScriptResolver) {
-                ScriptResolver scriptResolver = (ScriptResolver) resolver;
-                if (scriptResolver.hasUrlLookup()) {
-                    scriptResolver.lookupUrl(url);
+        if (!mLoadingPlugins.isEmpty() || !mInitializingResolvers.isEmpty()) {
+            mWaitingUrlLookups.add(url);
+        } else {
+            for (Resolver resolver : mResolvers) {
+                if (resolver instanceof ScriptResolver) {
+                    ScriptResolver scriptResolver = (ScriptResolver) resolver;
+                    if (scriptResolver.hasUrlLookup()) {
+                        scriptResolver.lookupUrl(url);
+                    }
                 }
             }
         }

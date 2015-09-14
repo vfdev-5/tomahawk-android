@@ -24,7 +24,7 @@ import com.nineoldandroids.animation.ValueAnimator;
 import com.pascalwelsch.holocircularprogressbar.HoloCircularProgressBar;
 
 import org.tomahawk.libtomahawk.resolver.Resolver;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
@@ -149,7 +149,7 @@ public class PlaybackPanel extends FrameLayout {
                 PreferenceManager.getDefaultSharedPreferences(getContext()).edit()
                         .putBoolean(TomahawkMainActivity.COACHMARK_SEEK_DISABLED, true)
                         .apply();
-                View coachMark = TomahawkUtils.ensureInflation(PlaybackPanel.this,
+                View coachMark = ViewUtils.ensureInflation(PlaybackPanel.this,
                         R.id.playbackpanel_seek_coachmark_stub, R.id.playbackpanel_seek_coachmark);
                 coachMark.setVisibility(GONE);
                 if (!isPanelExpanded || getResources().getBoolean(R.bool.is_landscape)) {
@@ -206,10 +206,17 @@ public class PlaybackPanel extends FrameLayout {
                             float progressBarX = mProgressBar.getX();
                             float finalX;
                             if (eventX > mProgressBar.getWidth() + progressBarX) {
-                                mAbortSeeking = true;
+                                // Only fade out thumb if eventX is above the threshold
+                                int threshold = getResources().getDimensionPixelSize(
+                                        R.dimen.playback_panel_seekbar_threshold_end);
+                                mAbortSeeking = eventX > mProgressBar.getWidth() + progressBarX
+                                        + threshold;
                                 finalX = mProgressBar.getWidth() + progressBarX;
                             } else if (eventX < progressBarX) {
-                                mAbortSeeking = true;
+                                // Only fade out thumb if eventX is below the threshold
+                                int threshold = getResources().getDimensionPixelSize(
+                                        R.dimen.playback_panel_seekbar_threshold_start);
+                                mAbortSeeking = eventX < progressBarX - threshold;
                                 finalX = progressBarX;
                             } else {
                                 mAbortSeeking = false;
@@ -229,7 +236,7 @@ public class PlaybackPanel extends FrameLayout {
                             int seekTime = (int)
                                     ((finalX - mProgressBar.getX()) / mProgressBar.getWidth()
                                             * mPlaybackService.getCurrentTrack().getDuration());
-                            mSeekTimeTextView.setText(TomahawkUtils.durationToString(seekTime));
+                            mSeekTimeTextView.setText(ViewUtils.durationToString(seekTime));
                         }
                         return false;
                     }
@@ -268,8 +275,8 @@ public class PlaybackPanel extends FrameLayout {
 
     private void updateText() {
         if (mPlaybackService != null && mPlaybackService.getCurrentQuery() != null) {
-            mArtistTextView.setText(mPlaybackService.getCurrentQuery().getArtist().getName());
-            mTrackTextView.setText(mPlaybackService.getCurrentQuery().getName());
+            mArtistTextView.setText(mPlaybackService.getCurrentQuery().getArtist().getPrettyName());
+            mTrackTextView.setText(mPlaybackService.getCurrentQuery().getPrettyName());
         }
     }
 
@@ -280,11 +287,11 @@ public class PlaybackPanel extends FrameLayout {
         if (duration != 0) {
             mCircularProgressBar.setProgress((float) currentPosition / duration);
             mProgressBar.setProgress((int) ((float) currentPosition / duration * 10000));
-            mCurrentTimeTextView.setText(TomahawkUtils.durationToString(currentPosition));
+            mCurrentTimeTextView.setText(ViewUtils.durationToString(currentPosition));
         } else {
             mProgressBar.setProgress(0);
             mCircularProgressBar.setProgress(0);
-            mCurrentTimeTextView.setText(TomahawkUtils.durationToString(0));
+            mCurrentTimeTextView.setText(ViewUtils.durationToString(0));
         }
     }
 
@@ -309,7 +316,7 @@ public class PlaybackPanel extends FrameLayout {
             if (mPlaybackService != null
                     && mPlaybackService.getCurrentTrack() != null
                     && mPlaybackService.getCurrentTrack().getDuration() > 0) {
-                mCompletionTimeTextView.setText(TomahawkUtils.durationToString(
+                mCompletionTimeTextView.setText(ViewUtils.durationToString(
                         mPlaybackService.getCurrentTrack().getDuration()));
             } else {
                 mCompletionTimeTextView.setText(COMPLETION_STRING_DEFAULT);
@@ -318,7 +325,7 @@ public class PlaybackPanel extends FrameLayout {
     }
 
     private void setupAnimations() {
-        TomahawkUtils.afterViewGlobalLayout(new TomahawkUtils.ViewRunnable(this) {
+        ViewUtils.afterViewGlobalLayout(new ViewUtils.ViewRunnable(this) {
             @Override
             public void run() {
                 mAnimators.clear();

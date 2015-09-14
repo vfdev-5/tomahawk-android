@@ -17,6 +17,7 @@
  */
 package org.tomahawk.tomahawk_android.fragments;
 
+import org.jdeferred.DoneCallback;
 import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
 import org.tomahawk.libtomahawk.authentication.HatchetAuthenticatorUtils;
 import org.tomahawk.libtomahawk.infosystem.InfoRequestData;
@@ -64,47 +65,52 @@ public class UserPagerFragment extends PagerFragment {
                     getActivity().getSupportFragmentManager().popBackStack();
                     return;
                 } else if (mUser.getName() == null) {
-                    String requestId = InfoSystem.getInstance().resolve(mUser);
+                    String requestId = InfoSystem.get().resolve(mUser);
                     if (requestId != null) {
                         mCorrespondingRequestIds.add(requestId);
                     }
                 }
             }
         }
-        HatchetAuthenticatorUtils authUtils =
-                (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
-                        .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-        User user = authUtils.getLoggedInUser();
-        if (user != null && user.getFollowings() == null) {
-            String requestId = InfoSystem.getInstance().resolveFollowings(user);
-            if (requestId != null) {
-                mCorrespondingRequestIds.add(requestId);
+        User.getSelf().done(new DoneCallback<User>() {
+            @Override
+            public void onDone(User user) {
+                if (user != null && user.getFollowings() == null) {
+                    String requestId = InfoSystem.get().resolveFollowings(user);
+                    if (requestId != null) {
+                        mCorrespondingRequestIds.add(requestId);
+                    }
+                }
             }
-        }
+        });
 
         mFollowButtonListener = new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                HatchetAuthenticatorUtils authUtils =
-                        (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
+                final HatchetAuthenticatorUtils authUtils =
+                        (HatchetAuthenticatorUtils) AuthenticatorManager.get()
                                 .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-                if (authUtils.getLoggedInUser().getFollowings() != null
-                        && authUtils.getLoggedInUser().getFollowings().containsKey(mUser)) {
-                    String relationshipId =
-                            authUtils.getLoggedInUser().getFollowings().get(mUser);
-                    mCorrespondingRequestIds.add(InfoSystem.getInstance()
-                            .deleteRelationship(authUtils, relationshipId));
-                    mShowFakeNotFollowing = true;
-                    mShowFakeFollowing = false;
-                } else {
-                    String requestId = InfoSystem.getInstance()
-                            .sendRelationshipPostStruct(authUtils, mUser);
-                    if (requestId != null) {
-                        mCorrespondingRequestIds.add(requestId);
+                User.getSelf().done(new DoneCallback<User>() {
+                    @Override
+                    public void onDone(User user) {
+                        if (user.getFollowings() != null
+                                && user.getFollowings().containsKey(mUser)) {
+                            String relationshipId = user.getFollowings().get(mUser);
+                            mCorrespondingRequestIds.add(InfoSystem.get()
+                                    .deleteRelationship(authUtils, relationshipId));
+                            mShowFakeNotFollowing = true;
+                            mShowFakeFollowing = false;
+                        } else {
+                            String requestId = InfoSystem.get()
+                                    .sendRelationshipPostStruct(authUtils, mUser);
+                            if (requestId != null) {
+                                mCorrespondingRequestIds.add(requestId);
+                            }
+                            mShowFakeNotFollowing = false;
+                            mShowFakeFollowing = true;
+                        }
                     }
-                    mShowFakeNotFollowing = false;
-                    mShowFakeFollowing = true;
-                }
+                });
                 showContentHeader(mUser);
             }
         };
@@ -126,7 +132,7 @@ public class UserPagerFragment extends PagerFragment {
 
         fragmentInfoList = new FragmentInfoList();
         fragmentInfo = new FragmentInfo();
-        fragmentInfo.mClass = UserCollectionFragment.class;
+        fragmentInfo.mClass = AlbumsFragment.class;
         fragmentInfo.mTitle = getString(R.string.drawer_title_collection);
         fragmentInfo.mBundle = getChildFragmentBundle();
         fragmentInfo.mBundle.putString(TomahawkFragment.USER, mUser.getCacheKey());
@@ -143,8 +149,8 @@ public class UserPagerFragment extends PagerFragment {
         fragmentInfo.mClass = PlaylistEntriesFragment.class;
         fragmentInfo.mTitle = getString(R.string.history);
         fragmentInfo.mBundle = getChildFragmentBundle();
-        fragmentInfo.mBundle.putString(TomahawkFragment.PLAYLIST,
-                mUser.getPlaybackLog().getCacheKey());
+        fragmentInfo.mBundle.putInt(TomahawkFragment.SHOW_MODE,
+                PlaylistEntriesFragment.SHOW_MODE_PLAYBACKLOG);
         fragmentInfo.mBundle.putString(TomahawkFragment.USER, mUser.getCacheKey());
         fragmentInfo.mIconResId = R.drawable.ic_action_history;
         fragmentInfoList.addFragmentInfo(fragmentInfo);
@@ -152,8 +158,8 @@ public class UserPagerFragment extends PagerFragment {
         fragmentInfo.mClass = PlaylistEntriesFragment.class;
         fragmentInfo.mTitle = getString(R.string.drawer_title_lovedtracks);
         fragmentInfo.mBundle = getChildFragmentBundle();
-        fragmentInfo.mBundle.putString(TomahawkFragment.PLAYLIST,
-                mUser.getFavorites().getCacheKey());
+        fragmentInfo.mBundle.putInt(TomahawkFragment.SHOW_MODE,
+                PlaylistEntriesFragment.SHOW_MODE_LOVEDITEMS);
         fragmentInfo.mBundle.putString(TomahawkFragment.USER, mUser.getCacheKey());
         fragmentInfo.mIconResId = R.drawable.ic_action_favorites;
         fragmentInfoList.addFragmentInfo(fragmentInfo);
@@ -183,30 +189,30 @@ public class UserPagerFragment extends PagerFragment {
         fragmentInfoList.addFragmentInfo(fragmentInfo);
         fragmentInfoLists.add(fragmentInfoList);
 
-        setupPager(fragmentInfoLists, initialPage, USERPAGER_SELECTOR_POSITION);
+        setupPager(fragmentInfoLists, initialPage, USERPAGER_SELECTOR_POSITION, 1);
     }
 
     @Override
     protected void onInfoSystemResultsReported(InfoRequestData infoRequestData) {
         showContentHeader(mUser);
 
-        InfoRequestData sentLoggedOp = InfoSystem.getInstance()
+        InfoRequestData sentLoggedOp = InfoSystem.get()
                 .getSentLoggedOpById(infoRequestData.getRequestId());
         if (sentLoggedOp != null
                 && sentLoggedOp.getType() == InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS
                 && (sentLoggedOp.getHttpType() == InfoRequestData.HTTPTYPE_DELETE
                 || sentLoggedOp.getHttpType() == InfoRequestData.HTTPTYPE_POST)) {
-            HatchetAuthenticatorUtils authUtils
-                    = (HatchetAuthenticatorUtils) AuthenticatorManager
-                    .getInstance().getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-            String requestId =
-                    InfoSystem.getInstance().resolveFollowings(authUtils.getLoggedInUser());
-            if (requestId != null) {
-                mCorrespondingRequestIds.add(requestId);
-            }
+            User.getSelf().done(new DoneCallback<User>() {
+                @Override
+                public void onDone(User user) {
+                    String requestId = InfoSystem.get().resolveFollowings(user);
+                    if (requestId != null) {
+                        mCorrespondingRequestIds.add(requestId);
+                    }
+                }
+            });
         }
-        if (infoRequestData.getType()
-                == InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS_USERS_FOLLOWINGS) {
+        if (infoRequestData.getType() == InfoRequestData.INFOREQUESTDATA_TYPE_USERS_FOLLOWS) {
             mShowFakeFollowing = false;
             mShowFakeNotFollowing = false;
         }

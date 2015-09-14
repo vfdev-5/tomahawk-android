@@ -17,14 +17,15 @@
  */
 package org.tomahawk.tomahawk_android.fragments;
 
-import com.google.common.collect.Sets;
-
 import org.tomahawk.libtomahawk.collection.Album;
 import org.tomahawk.libtomahawk.collection.Artist;
 import org.tomahawk.libtomahawk.collection.Image;
+import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.infosystem.InfoRequestData;
 import org.tomahawk.libtomahawk.infosystem.InfoSystem;
 import org.tomahawk.libtomahawk.infosystem.User;
+import org.tomahawk.libtomahawk.infosystem.hatchet.Search;
+import org.tomahawk.libtomahawk.infosystem.hatchet.SearchResult;
 import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.tomahawk_android.R;
@@ -41,6 +42,7 @@ import android.os.Bundle;
 import android.view.View;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,19 +52,19 @@ public class SearchPagerFragment extends PagerFragment {
     private String mCurrentQueryString;
 
     protected final Set<Query> mCorrespondingQueries
-            = Sets.newSetFromMap(new ConcurrentHashMap<Query, Boolean>());
+            = Collections.newSetFromMap(new ConcurrentHashMap<Query, Boolean>());
 
     private final ArrayList<String> mAlbumIds = new ArrayList<>();
 
     private final ArrayList<String> mArtistIds = new ArrayList<>();
 
-    private final ArrayList<String> mSongIds = new ArrayList<>();
-
     private final ArrayList<String> mUserIds = new ArrayList<>();
 
-    private Image mContentHeaderImage;
+    private Playlist mTrackResultPlaylist;
 
     private SearchFragmentReceiver mSearchFragmentReceiver;
+
+    private boolean mIsFirstBroadcast;
 
     /**
      * Handles incoming broadcasts.
@@ -74,9 +76,10 @@ public class SearchPagerFragment extends PagerFragment {
             if (ConnectivityManager.CONNECTIVITY_ACTION.equals(intent.getAction())) {
                 boolean noConnectivity =
                         intent.getBooleanExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY, false);
-                if (!noConnectivity) {
+                if (!noConnectivity && !mIsFirstBroadcast) {
                     resolveFullTextQuery(mCurrentQueryString);
                 }
+                mIsFirstBroadcast = false;
             }
         }
     }
@@ -84,12 +87,7 @@ public class SearchPagerFragment extends PagerFragment {
     @SuppressWarnings("unused")
     public void onEventMainThread(PipeLine.ResultsEvent event) {
         if (mCorrespondingQueries.contains(event.mQuery)) {
-            mSongIds.clear();
-            if (event.mQuery != null) {
-                for (Query q : event.mQuery.getTrackQueries()) {
-                    mSongIds.add(q.getCacheKey());
-                }
-            }
+            mTrackResultPlaylist = event.mQuery.getResultPlaylist();
             updatePager();
         }
     }
@@ -138,17 +136,18 @@ public class SearchPagerFragment extends PagerFragment {
             getActivity().setTitle(mCurrentQueryString);
         }
 
-        showContentHeader(mContentHeaderImage);
+        showContentHeader(null);
 
         updatePager(initialPage);
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
+    public void onStart() {
+        super.onStart();
 
         // Initialize and register Receiver
         if (mSearchFragmentReceiver == null) {
+            mIsFirstBroadcast = true;
             mSearchFragmentReceiver = new SearchFragmentReceiver();
             IntentFilter intentFilter = new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
             getActivity().registerReceiver(mSearchFragmentReceiver, intentFilter);
@@ -160,10 +159,15 @@ public class SearchPagerFragment extends PagerFragment {
         super.onPause();
 
         for (Query query : mCorrespondingQueries) {
-            if (ThreadManager.getInstance().stop(query)) {
+            if (ThreadManager.get().stop(query)) {
                 mCorrespondingQueries.remove(query);
             }
         }
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
 
         if (mSearchFragmentReceiver != null) {
             getActivity().unregisterReceiver(mSearchFragmentReceiver);
@@ -213,12 +217,12 @@ public class SearchPagerFragment extends PagerFragment {
 
         fragmentInfoList = new FragmentInfoList();
         fragmentInfo = new FragmentInfo();
-        fragmentInfo.mClass = TracksFragment.class;
+        fragmentInfo.mClass = PlaylistEntriesFragment.class;
         fragmentInfo.mTitle = getString(R.string.songs);
         fragmentInfo.mBundle = getChildFragmentBundle();
-        if (mSongIds != null) {
+        if (mTrackResultPlaylist != null) {
             fragmentInfo.mBundle
-                    .putStringArrayList(TomahawkFragment.QUERYARRAY, mSongIds);
+                    .putString(TomahawkFragment.PLAYLIST, mTrackResultPlaylist.getId());
         }
         fragmentInfoList.addFragmentInfo(fragmentInfo);
         fragmentInfoLists.add(fragmentInfoList);
@@ -235,7 +239,7 @@ public class SearchPagerFragment extends PagerFragment {
         fragmentInfoList.addFragmentInfo(fragmentInfo);
         fragmentInfoLists.add(fragmentInfoList);
 
-        setupPager(fragmentInfoLists, initialPage, null);
+        setupPager(fragmentInfoLists, initialPage, null, 1);
     }
 
     /**
@@ -243,14 +247,14 @@ public class SearchPagerFragment extends PagerFragment {
      */
     public void resolveFullTextQuery(String fullTextQuery) {
         ((TomahawkMainActivity) getActivity()).closeDrawer();
-        mSongIds.clear();
+        mTrackResultPlaylist = null;
         mAlbumIds.clear();
         mArtistIds.clear();
         mUserIds.clear();
         mCurrentQueryString = fullTextQuery;
         mCorrespondingRequestIds.clear();
-        mCorrespondingRequestIds.add(InfoSystem.getInstance().resolve(fullTextQuery));
-        Query query = PipeLine.getInstance().resolve(fullTextQuery, false);
+        mCorrespondingRequestIds.add(InfoSystem.get().resolve(fullTextQuery));
+        Query query = PipeLine.get().resolve(fullTextQuery, false);
         if (query != null) {
             mCorrespondingQueries.clear();
             mCorrespondingQueries.add(query);
@@ -259,26 +263,37 @@ public class SearchPagerFragment extends PagerFragment {
 
     @Override
     protected void onInfoSystemResultsReported(InfoRequestData infoRequestData) {
-        for (Artist artist : infoRequestData.getResultList(Artist.class)) {
-            if (mContentHeaderImage == null && artist.getImage() != null) {
-                mContentHeaderImage = artist.getImage();
-                showContentHeader(mContentHeaderImage);
+        List<Search> results = infoRequestData.getResultList(Search.class);
+        if (results != null && results.size() > 0) {
+            Search search = results.get(0);
+            float maxScore = 0f;
+            Image contentHeaderImage = null;
+            for (SearchResult result : search.getSearchResults()) {
+                Object resultObject = result.getResult();
+                if (resultObject instanceof Artist) {
+                    Artist artist = (Artist) resultObject;
+                    mArtistIds.add(artist.getCacheKey());
+                    if (artist.getImage() != null && result.getScore() > maxScore) {
+                        maxScore = result.getScore();
+                        contentHeaderImage = artist.getImage();
+                    }
+                } else if (resultObject instanceof Album) {
+                    Album album = (Album) resultObject;
+                    mAlbumIds.add(album.getCacheKey());
+                    if (album.getImage() != null && result.getScore() > maxScore) {
+                        maxScore = result.getScore();
+                        contentHeaderImage = album.getImage();
+                    }
+                } else if (resultObject instanceof User) {
+                    User user = (User) resultObject;
+                    mUserIds.add(user.getCacheKey());
+                    if (user.getImage() != null && result.getScore() > maxScore) {
+                        maxScore = result.getScore();
+                        contentHeaderImage = user.getImage();
+                    }
+                }
             }
-            mArtistIds.add(artist.getCacheKey());
-        }
-        for (Album album : infoRequestData.getResultList(Album.class)) {
-            if (mContentHeaderImage == null && album.getImage() != null) {
-                mContentHeaderImage = album.getImage();
-                showContentHeader(mContentHeaderImage);
-            }
-            mAlbumIds.add(album.getCacheKey());
-        }
-        for (User user : infoRequestData.getResultList(User.class)) {
-            if (mContentHeaderImage == null && user.getImage() != null) {
-                mContentHeaderImage = user.getImage();
-                showContentHeader(mContentHeaderImage);
-            }
-            mUserIds.add(user.getCacheKey());
+            showContentHeader(contentHeaderImage);
         }
         updatePager();
     }

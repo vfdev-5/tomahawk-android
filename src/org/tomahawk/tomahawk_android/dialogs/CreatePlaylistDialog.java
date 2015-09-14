@@ -20,7 +20,7 @@ package org.tomahawk.tomahawk_android.dialogs;
 import org.tomahawk.libtomahawk.collection.CollectionManager;
 import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.database.DatabaseHelper;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 import org.tomahawk.tomahawk_android.fragments.ContentHeaderFragment;
@@ -54,9 +54,9 @@ public class CreatePlaylistDialog extends ConfigDialog {
         if (getArguments() != null && getArguments()
                 .containsKey(TomahawkFragment.PLAYLIST)) {
             String playlistId = getArguments().getString(TomahawkFragment.PLAYLIST);
-            mPlaylist = DatabaseHelper.getInstance().getPlaylist(playlistId);
+            mPlaylist = DatabaseHelper.get().getPlaylist(playlistId);
             if (mPlaylist == null) {
-                mPlaylist = Playlist.getPlaylistById(playlistId);
+                mPlaylist = Playlist.getByKey(playlistId);
                 if (mPlaylist == null) {
                     dismiss();
                 }
@@ -68,7 +68,7 @@ public class CreatePlaylistDialog extends ConfigDialog {
         mNameEditText.setHint(R.string.name_playlist);
         mNameEditText.setOnEditorActionListener(mOnKeyboardEnterListener);
 
-        TomahawkUtils.showSoftKeyboard(mNameEditText);
+        ViewUtils.showSoftKeyboard(mNameEditText);
 
         //Set the textview's text to the proper title
         setDialogTitle(getString(R.string.create_playlist));
@@ -90,7 +90,7 @@ public class CreatePlaylistDialog extends ConfigDialog {
                     ? getString(R.string.playlist)
                     : mNameEditText.getText().toString();
             mPlaylist.setName(playlistName);
-            CollectionManager.getInstance().createPlaylist(mPlaylist);
+            CollectionManager.get().createPlaylist(mPlaylist);
             Bundle bundle = new Bundle();
             bundle.putString(TomahawkFragment.PLAYLIST, mPlaylist.getId());
             bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,

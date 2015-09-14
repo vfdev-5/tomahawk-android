@@ -21,7 +21,8 @@ import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
 import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.ScriptResolver;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverConfigUiField;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.VariousUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.fragments.TomahawkFragment;
 import org.tomahawk.tomahawk_android.ui.widgets.ConfigCheckbox;
@@ -67,9 +68,8 @@ public class ResolverConfigDialog extends ConfigDialog {
     @Override
     public Dialog onCreateDialog(Bundle savedInstanceState) {
         if (getArguments() != null && getArguments().containsKey(TomahawkFragment.PREFERENCEID)) {
-            String resolverId = getArguments().getString(
-                    TomahawkFragment.PREFERENCEID);
-            mScriptResolver = (ScriptResolver) PipeLine.getInstance().getResolver(resolverId);
+            String resolverId = getArguments().getString(TomahawkFragment.PREFERENCEID);
+            mScriptResolver = (ScriptResolver) PipeLine.get().getResolver(resolverId);
         }
 
         EditText showKeyboardEditText = null;
@@ -101,7 +101,7 @@ public class ResolverConfigDialog extends ConfigDialog {
                     if (config.get(field.name) != null) {
                         editText.setText((String) config.get(field.name));
                     }
-                    if (TomahawkUtils.containsIgnoreCase(field.name, "password")) {
+                    if (VariousUtils.containsIgnoreCase(field.name, "password")) {
                         editText.setInputType(InputType.TYPE_TEXT_VARIATION_PASSWORD);
                         editText.setTransformationMethod(new PasswordTransformationMethod());
                     }
@@ -132,11 +132,14 @@ public class ResolverConfigDialog extends ConfigDialog {
         } else {
             hideNegativeButton();
         }
+        if (mScriptResolver.getScriptAccount().isManuallyInstalled()) {
+            showRemoveButton();
+        }
         if (lastEditText != null) {
             lastEditText.setOnEditorActionListener(mOnKeyboardEnterListener);
         }
         if (showKeyboardEditText != null) {
-            TomahawkUtils.showSoftKeyboard(showKeyboardEditText);
+            ViewUtils.showSoftKeyboard(showKeyboardEditText);
         }
         setDialogTitle(mScriptResolver.getName());
         if (!mScriptResolver.isConfigTestable()) {
@@ -197,6 +200,16 @@ public class ResolverConfigDialog extends ConfigDialog {
 
     @Override
     protected void onNegativeAction() {
+        dismiss();
+    }
+
+    @Override
+    protected void onRemoveAction() {
+        RemovePluginConfigDialog dialog = new RemovePluginConfigDialog();
+        Bundle args = new Bundle();
+        args.putString(TomahawkFragment.PREFERENCEID, mScriptResolver.getId());
+        dialog.setArguments(args);
+        dialog.show(getFragmentManager(), null);
         dismiss();
     }
 }

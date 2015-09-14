@@ -22,7 +22,6 @@ import org.tomahawk.libtomahawk.resolver.ScriptAccount;
 import org.tomahawk.libtomahawk.resolver.ScriptJob;
 import org.tomahawk.libtomahawk.resolver.ScriptObject;
 import org.tomahawk.libtomahawk.resolver.ScriptPlugin;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
 
 public class ScriptInfoPlugin implements InfoPlugin, ScriptPlugin {
 
@@ -37,17 +36,10 @@ public class ScriptInfoPlugin implements InfoPlugin, ScriptPlugin {
 
     @Override
     public void send(InfoRequestData infoRequestData, AuthenticatorUtils authenticatorUtils) {
-
     }
 
     @Override
     public void resolve(InfoRequestData infoRequestData) {
-
-    }
-
-    @Override
-    public void resolve(InfoRequestData infoRequestData, TomahawkListItem itemToBeFilled) {
-
     }
 
     @Override

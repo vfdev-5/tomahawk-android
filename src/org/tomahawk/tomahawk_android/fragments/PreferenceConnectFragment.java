@@ -24,6 +24,7 @@ import org.tomahawk.libtomahawk.resolver.HatchetStubResolver;
 import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Resolver;
 import org.tomahawk.libtomahawk.resolver.ScriptResolver;
+import org.tomahawk.libtomahawk.resolver.UserCollectionStubResolver;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
@@ -31,12 +32,14 @@ import org.tomahawk.tomahawk_android.adapters.Segment;
 import org.tomahawk.tomahawk_android.adapters.TomahawkListAdapter;
 import org.tomahawk.tomahawk_android.dialogs.ConfigDialog;
 import org.tomahawk.tomahawk_android.dialogs.DirectoryChooserConfigDialog;
+import org.tomahawk.tomahawk_android.dialogs.GMusicConfigDialog;
 import org.tomahawk.tomahawk_android.dialogs.LoginConfigDialog;
 import org.tomahawk.tomahawk_android.dialogs.ResolverConfigDialog;
 import org.tomahawk.tomahawk_android.dialogs.ResolverRedirectConfigDialog;
 import org.tomahawk.tomahawk_android.utils.MultiColumnClickListener;
 
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 
 import java.util.ArrayList;
@@ -89,16 +92,16 @@ public class PreferenceConnectFragment extends TomahawkListFragment
         List<Segment> segments = new ArrayList<>();
 
         // Add the header text item
-        List textItems = new ArrayList();
+        List<ListItemString> textItems = new ArrayList<>();
         textItems.add(new ListItemString(getString(R.string.connect_headertext)));
-        Segment segment = new Segment(textItems);
+        Segment segment = new Segment.Builder(textItems).build();
         segments.add(segment);
 
         // Add all resolver grid items
-        List resolvers = new ArrayList();
-        resolvers.add(PipeLine.getInstance().getResolver(TomahawkApp.PLUGINNAME_USERCOLLECTION));
-        resolvers.add(new HatchetStubResolver());
-        List<ScriptResolver> scriptResolvers = PipeLine.getInstance().getScriptResolvers();
+        List<Resolver> resolvers = new ArrayList<>();
+        resolvers.add(UserCollectionStubResolver.get());
+        resolvers.add(HatchetStubResolver.get());
+        List<ScriptResolver> scriptResolvers = PipeLine.get().getScriptResolvers();
         Collections.sort(scriptResolvers, new Comparator<ScriptResolver>() {
             @Override
             public int compare(ScriptResolver lhs, ScriptResolver rhs) {
@@ -106,24 +109,46 @@ public class PreferenceConnectFragment extends TomahawkListFragment
             }
         });
         for (ScriptResolver scriptResolver : scriptResolvers) {
-            if (!scriptResolver.getId().contains("-metadata")) {
+            if (!scriptResolver.getId().contains("-metadata")
+                    && !scriptResolver.getScriptAccount().isManuallyInstalled()) {
                 resolvers.add(scriptResolver);
             }
         }
-        segment = new Segment(resolvers, R.integer.grid_column_count,
-                R.dimen.padding_superlarge, R.dimen.padding_superlarge);
+        segment = new Segment.Builder(resolvers)
+                .showAsGrid(R.integer.grid_column_count, R.dimen.padding_superlarge,
+                        R.dimen.padding_superlarge)
+                .build();
         segments.add(segment);
 
-        if (getListAdapter() == null) {
-            TomahawkListAdapter tomahawkListAdapter = new TomahawkListAdapter(
-                    (TomahawkMainActivity) getActivity(), getActivity().getLayoutInflater(),
-                    segments, getListView(), this);
-            setListAdapter(tomahawkListAdapter);
-        } else {
-            ((TomahawkListAdapter) getListAdapter()).setSegments(segments, getListView());
+        resolvers = new ArrayList<>();
+        for (ScriptResolver scriptResolver : scriptResolvers) {
+            if (!scriptResolver.getId().contains("-metadata")
+                    && scriptResolver.getScriptAccount().isManuallyInstalled()) {
+                resolvers.add(scriptResolver);
+            }
         }
+        segment = new Segment.Builder(resolvers)
+                .headerLayout(R.layout.single_line_list_header)
+                .headerString(R.string.connect_header_manualresolvers)
+                .showAsGrid(R.integer.grid_column_count, R.dimen.padding_superlarge,
+                        R.dimen.padding_superlarge)
+                .build();
+        segments.add(segment);
 
-        setupNonScrollableSpacer();
+        if (getListView() != null) {
+            if (getListAdapter() == null) {
+                TomahawkListAdapter tomahawkListAdapter = new TomahawkListAdapter(
+                        (TomahawkMainActivity) getActivity(), getActivity().getLayoutInflater(),
+                        segments, getListView(), this);
+                setListAdapter(tomahawkListAdapter);
+            } else {
+                ((TomahawkListAdapter) getListAdapter()).setSegments(segments, getListView());
+            }
+
+            setupNonScrollableSpacer(getListView());
+        } else {
+            Log.d(TAG, "Couldn't update adapter because getListView() returned null!");
+        }
     }
 
     @Override
@@ -142,6 +167,9 @@ public class PreferenceConnectFragment extends TomahawkListFragment
                     break;
                 case TomahawkApp.PLUGINNAME_HATCHET:
                     dialog = new LoginConfigDialog();
+                    break;
+                case TomahawkApp.PLUGINNAME_GMUSIC:
+                    dialog = new GMusicConfigDialog();
                     break;
                 default:
                     dialog = new ResolverConfigDialog();

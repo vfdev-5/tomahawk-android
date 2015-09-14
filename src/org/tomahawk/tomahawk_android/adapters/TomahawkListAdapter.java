@@ -25,6 +25,7 @@ import com.daimajia.swipe.util.Attributes;
 
 import org.tomahawk.libtomahawk.collection.Album;
 import org.tomahawk.libtomahawk.collection.Artist;
+import org.tomahawk.libtomahawk.collection.Collection;
 import org.tomahawk.libtomahawk.collection.ListItemString;
 import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.collection.PlaylistEntry;
@@ -32,13 +33,12 @@ import org.tomahawk.libtomahawk.infosystem.SocialAction;
 import org.tomahawk.libtomahawk.infosystem.User;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.libtomahawk.resolver.Resolver;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 import org.tomahawk.tomahawk_android.fragments.PlaylistsFragment;
 import org.tomahawk.tomahawk_android.utils.MultiColumnClickListener;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
 import org.tomahawk.tomahawk_android.views.BiDirectionalFrame;
 
 import android.content.SharedPreferences;
@@ -73,6 +73,8 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
 
     private int mRowCount;
 
+    private Collection mCollection;
+
     private final MultiColumnClickListener mClickListener;
 
     private final LayoutInflater mLayoutInflater;
@@ -99,16 +101,27 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
      * Constructs a new {@link TomahawkListAdapter}.
      */
     public TomahawkListAdapter(TomahawkMainActivity activity, LayoutInflater layoutInflater,
+            List<Segment> segments, Collection collection, StickyListHeadersListView listView,
+            MultiColumnClickListener clickListener) {
+        mActivity = activity;
+        mLayoutInflater = layoutInflater;
+        mClickListener = clickListener;
+        setSegments(segments);
+        updateFooterSpacerHeight(listView);
+        mItemManager.setMode(Attributes.Mode.Single);
+        mCollection = collection;
+    }
+
+    /**
+     * Constructs a new {@link TomahawkListAdapter}.
+     */
+    public TomahawkListAdapter(TomahawkMainActivity activity, LayoutInflater layoutInflater,
             List<Segment> segments, StickyListHeadersListView listView,
             MultiColumnClickListener clickListener) {
         mActivity = activity;
         mLayoutInflater = layoutInflater;
         mClickListener = clickListener;
-        mSegments = segments;
-        mRowCount = 0;
-        for (Segment segment : mSegments) {
-            mRowCount += segment.size();
-        }
+        setSegments(segments);
         updateFooterSpacerHeight(listView);
         mItemManager.setMode(Attributes.Mode.Single);
     }
@@ -122,9 +135,9 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
         mActivity = activity;
         mLayoutInflater = layoutInflater;
         mClickListener = clickListener;
-        mSegments = new ArrayList<>();
-        mSegments.add(segment);
-        mRowCount = segment.size();
+        List<Segment> segments = new ArrayList<>();
+        segments.add(segment);
+        setSegments(segments);
         updateFooterSpacerHeight(listView);
         mItemManager.setMode(Attributes.Mode.Single);
     }
@@ -133,22 +146,27 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
      * Set the complete list of {@link Segment}
      */
     public void setSegments(List<Segment> segments, StickyListHeadersListView listView) {
-        mSegments = segments;
-        mRowCount = 0;
-        for (Segment segment : mSegments) {
-            mRowCount += segment.size();
-        }
+        setSegments(segments);
+
         updateFooterSpacerHeight(listView);
         notifyDataSetChanged();
     }
 
-    /**
-     * Set the complete list of {@link Segment}
-     */
-    public void setSegments(Segment segment, StickyListHeadersListView listView) {
-        ArrayList<Segment> segments = new ArrayList<>();
-        segments.add(segment);
-        setSegments(segments, listView);
+    private void setSegments(List<Segment> segments) {
+        closeSegments();
+        mSegments = segments;
+        mRowCount = 0;
+        for (Segment segment : mSegments) {
+            mRowCount += segment.getRowCount();
+        }
+    }
+
+    public void closeSegments() {
+        if (mSegments != null) {
+            for (Segment segment : mSegments) {
+                segment.close();
+            }
+        }
     }
 
     public void setShowContentHeaderSpacer(int headerSpacerHeight,
@@ -159,8 +177,8 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
     }
 
     /**
-     * Set whether or not to highlight the currently playing {@link TomahawkListItem} and show the
-     * play/pause state
+     * Set whether or not to highlight the currently playing {@link Query} and show the play/pause
+     * state
      */
     public void setShowPlaystate(boolean showPlaystate) {
         this.mShowPlaystate = showPlaystate;
@@ -281,7 +299,7 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
                                 if (!preferences.getBoolean(
                                         TomahawkMainActivity.COACHMARK_SWIPELAYOUT_ENQUEUE_DISABLED,
                                         false)) {
-                                    final View coachMark = TomahawkUtils.ensureInflation(
+                                    final View coachMark = ViewUtils.ensureInflation(
                                             swipeLayout, R.id.swipelayout_enqueue_coachmark_stub,
                                             R.id.swipelayout_enqueue_coachmark);
                                     coachMark.setVisibility(View.VISIBLE);
@@ -377,7 +395,7 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
                     viewHolder.fillView((Artist) item);
                 } else if (viewHolder.mLayoutId == R.layout.grid_item_album
                         || viewHolder.mLayoutId == R.layout.list_item_album) {
-                    viewHolder.fillView((Album) item);
+                    viewHolder.fillView((Album) item, mCollection);
                 } else if (viewHolder.mLayoutId == R.layout.grid_item_resolver) {
                     viewHolder.fillView((Resolver) item);
                 } else if (viewHolder.mLayoutId == R.layout.grid_item_playlist) {
@@ -390,10 +408,10 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
                         || viewHolder.mLayoutId == R.layout.list_item_user) {
                     viewHolder.fillView((User) item);
                 } else if (viewHolder.mLayoutId == R.layout.single_line_list_item) {
-                    viewHolder.fillView(((TomahawkListItem) item).getName());
+                    viewHolder.fillView(((Playlist) item).getName());
                 } else if (viewHolder.mLayoutId == R.layout.list_item_text
                         || viewHolder.mLayoutId == R.layout.list_item_text_highlighted) {
-                    viewHolder.fillView(((TomahawkListItem) item).getName());
+                    viewHolder.fillView(((ListItemString) item).getText());
                 } else if (viewHolder.mLayoutId == R.layout.list_item_track_artist
                         || viewType == R.layout.list_item_numeration_track_artist
                         || viewType == R.layout.list_item_numeration_track_duration) {
@@ -493,11 +511,11 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
         int counter = 0;
         int correctedPos = position;
         for (Segment segment : mSegments) {
-            counter += segment.size();
+            counter += segment.getRowCount();
             if (position < counter) {
                 return segment.get(correctedPos);
             } else {
-                correctedPos -= segment.size();
+                correctedPos -= segment.getRowCount();
             }
         }
         return null;
@@ -513,7 +531,7 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
         }
         int counter = 0;
         for (Segment segment : mSegments) {
-            counter += segment.size();
+            counter += segment.getRowCount();
             if (position < counter) {
                 return segment;
             }
@@ -532,11 +550,11 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
         int counter = 0;
         int correctedPos = position;
         for (Segment segment : mSegments) {
-            counter += segment.size();
+            counter += segment.getRowCount();
             if (position < counter) {
                 return correctedPos;
             } else {
-                correctedPos -= segment.size();
+                correctedPos -= segment.getRowCount();
             }
         }
         return 0;
@@ -589,7 +607,7 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
                 viewHolder.fillHeaderView(segment.getHeaderString());
             } else if (layoutId == R.layout.list_header_socialaction) {
                 SocialAction socialAction = (SocialAction) segment.getFirstSegmentItem();
-                viewHolder.fillHeaderView(socialAction, segment.segmentSize());
+                viewHolder.fillHeaderView(socialAction, segment.getCount());
             }
             return view;
         } else {
@@ -682,7 +700,7 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
 
     private void updateFooterSpacerHeight(final StickyListHeadersListView listView) {
         if (mHeaderSpacerHeight > 0) {
-            TomahawkUtils.afterViewGlobalLayout(new TomahawkUtils.ViewRunnable(listView) {
+            ViewUtils.afterViewGlobalLayout(new ViewUtils.ViewRunnable(listView) {
                 @Override
                 public void run() {
                     mFooterSpacerHeight = calculateFooterSpacerHeight(listView);
@@ -727,10 +745,6 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
         Object o = getItem(position);
         if (!(o instanceof List)) {
-            // Don't display the socialAction item directly, but rather the item that is its target
-            if (o instanceof SocialAction && ((SocialAction) o).getTargetObject() != null) {
-                o = ((SocialAction) o).getTargetObject();
-            }
             mClickListener.onItemClick(view, o);
         }
     }
@@ -739,10 +753,6 @@ public class TomahawkListAdapter extends StickyBaseAdapter implements
     public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
         Object o = getItem(position);
         if (!(o instanceof List)) {
-            // Don't display the socialAction item directly, but rather the item that is its target
-            if (o instanceof SocialAction && ((SocialAction) o).getTargetObject() != null) {
-                o = ((SocialAction) o).getTargetObject();
-            }
             return mClickListener.onItemLongClick(view, o);
         }
         return false;

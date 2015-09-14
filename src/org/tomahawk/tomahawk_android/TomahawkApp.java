@@ -25,9 +25,9 @@ import org.acra.sender.HttpSender;
 import org.tomahawk.tomahawk_android.services.PlaybackService;
 import org.tomahawk.tomahawk_android.utils.TomahawkHttpSender;
 
+import android.app.Application;
 import android.content.Context;
 import android.os.StrictMode;
-import android.support.multidex.MultiDexApplication;
 import android.util.Log;
 
 /**
@@ -48,7 +48,7 @@ import android.util.Log;
         resDialogTitle = R.string.crash_dialog_title,
         resDialogCommentPrompt = R.string.crash_dialog_comment_prompt,
         resDialogOkToast = R.string.crash_dialog_ok_toast)
-public class TomahawkApp extends MultiDexApplication {
+public class TomahawkApp extends Application {
 
     private static final String TAG = TomahawkApp.class.getSimpleName();
 
@@ -69,6 +69,8 @@ public class TomahawkApp extends MultiDexApplication {
     public final static String PLUGINNAME_OFFICIALFM = "officialfm";
 
     public final static String PLUGINNAME_SOUNDCLOUD = "soundcloud";
+
+    public final static String PLUGINNAME_GMUSIC = "gmusic";
 
     private static Context sApplicationContext;
 

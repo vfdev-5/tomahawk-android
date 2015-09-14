@@ -17,12 +17,16 @@
  */
 package org.tomahawk.tomahawk_android.fragments;
 
+import org.jdeferred.DoneCallback;
 import org.tomahawk.libtomahawk.collection.Artist;
 import org.tomahawk.libtomahawk.collection.Collection;
 import org.tomahawk.libtomahawk.collection.CollectionManager;
+import org.tomahawk.libtomahawk.collection.HatchetCollection;
+import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.infosystem.InfoRequestData;
 import org.tomahawk.libtomahawk.infosystem.InfoSystem;
 import org.tomahawk.tomahawk_android.R;
+import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.utils.FragmentInfo;
 import org.tomahawk.tomahawk_android.views.FancyDropDown;
 
@@ -35,7 +39,11 @@ import java.util.List;
 
 public class ArtistPagerFragment extends PagerFragment {
 
+    private static final String TAG = ArtistPagerFragment.class.getSimpleName();
+
     private Artist mArtist;
+
+    private int mInitialPage = -1;
 
     @SuppressWarnings("unused")
     public void onEventMainThread(CollectionManager.UpdatedEvent event) {
@@ -54,65 +62,86 @@ public class ArtistPagerFragment extends PagerFragment {
         super.onViewCreated(view, savedInstanceState);
 
         getActivity().setTitle("");
-        updatePager();
-    }
-
-    private void updatePager() {
-        int initialPage = -1;
         if (getArguments() != null) {
             if (getArguments().containsKey(TomahawkFragment.CONTAINER_FRAGMENT_PAGE)) {
-                initialPage = getArguments().getInt(TomahawkFragment.CONTAINER_FRAGMENT_PAGE);
+                mInitialPage = getArguments()
+                        .getInt(TomahawkFragment.CONTAINER_FRAGMENT_PAGE);
             }
             if (getArguments().containsKey(TomahawkFragment.ARTIST)
                     && !TextUtils.isEmpty(getArguments().getString(TomahawkFragment.ARTIST))) {
-                mArtist = Artist.getArtistByKey(
-                        getArguments().getString(TomahawkFragment.ARTIST));
+                mArtist = Artist.getByKey(getArguments().getString(TomahawkFragment.ARTIST));
                 if (mArtist == null) {
                     getActivity().getSupportFragmentManager().popBackStack();
                     return;
                 } else {
-                    ArrayList<String> requestIds = InfoSystem.getInstance().resolve(mArtist, true);
-                    for (String requestId : requestIds) {
-                        mCorrespondingRequestIds.add(requestId);
-                    }
+                    HatchetCollection hatchetCollection = (HatchetCollection)
+                            CollectionManager.get().getCollection(TomahawkApp.PLUGINNAME_HATCHET);
+                    hatchetCollection.getArtistTopHits(mArtist).done(new DoneCallback<Playlist>() {
+                        @Override
+                        public void onDone(Playlist result) {
+                            boolean full = false;
+                            if (result == null) {
+                                full = true;
+                            }
+                            ArrayList<String> requestIds = InfoSystem.get().resolve(mArtist, full);
+                            for (String requestId : requestIds) {
+                                mCorrespondingRequestIds.add(requestId);
+                            }
+                        }
+                    });
                 }
             }
         }
 
-        showContentHeader(mArtist);
-        final List<Collection> collections =
-                CollectionManager.getInstance().getAvailableCollections(mArtist);
-        int initialSelection = 0;
-        for (int i = 0; i < collections.size(); i++) {
-            if (collections.get(i).getId().equals(
-                    getArguments().getString(TomahawkFragment.COLLECTION_ID))) {
-                initialSelection = i;
-                break;
-            }
-        }
-        getArguments().putString(TomahawkFragment.COLLECTION_ID,
-                collections.get(initialSelection).getId());
-        showFancyDropDown(mArtist, initialSelection,
-                FancyDropDown.convertToDropDownItemInfo(collections),
-                new FancyDropDown.DropDownListener() {
-                    @Override
-                    public void onDropDownItemSelected(int position) {
-                        getArguments().putString(TomahawkFragment.COLLECTION_ID,
-                                collections.get(position).getId());
-                        updatePager();
-                    }
+        updatePager();
+    }
 
+    private void updatePager() {
+        showContentHeader(mArtist);
+
+        setupPager(getFragmentInfoLists(), mInitialPage, null, 1);
+        CollectionManager.get().getAvailableCollections(mArtist)
+                .done(new DoneCallback<List<Collection>>() {
                     @Override
-                    public void onCancel() {
+                    public void onDone(final List<Collection> result) {
+                        int initialSelection = 0;
+                        for (int i = 0; i < result.size(); i++) {
+                            if (result.get(i).getId().equals(
+                                    getArguments().getString(TomahawkFragment.COLLECTION_ID))) {
+                                initialSelection = i;
+                                break;
+                            }
+                        }
+                        getArguments().putString(TomahawkFragment.COLLECTION_ID,
+                                result.get(initialSelection).getId());
+                        showFancyDropDown(initialSelection, mArtist.getPrettyName().toUpperCase(),
+                                FancyDropDown.convertToDropDownItemInfo(result),
+                                new FancyDropDown.DropDownListener() {
+                                    @Override
+                                    public void onDropDownItemSelected(int position) {
+                                        getArguments().putString(TomahawkFragment.COLLECTION_ID,
+                                                result.get(position).getId());
+                                        fillAdapter(getFragmentInfoLists(), 0, 1);
+                                    }
+
+                                    @Override
+                                    public void onCancel() {
+                                    }
+                                });
+                        setupAnimations();
                     }
                 });
+    }
+
+    private List<FragmentInfoList> getFragmentInfoLists() {
         List<FragmentInfoList> fragmentInfoLists = new ArrayList<>();
         FragmentInfoList fragmentInfoList = new FragmentInfoList();
         FragmentInfo fragmentInfo = new FragmentInfo();
         fragmentInfo.mClass = AlbumsFragment.class;
         fragmentInfo.mTitle = getString(R.string.music);
         fragmentInfo.mBundle = getChildFragmentBundle();
-        fragmentInfo.mBundle.putString(TomahawkFragment.ARTIST, mArtist.getCacheKey());
+        fragmentInfo.mBundle
+                .putString(TomahawkFragment.ARTIST, mArtist.getCacheKey());
         fragmentInfoList.addFragmentInfo(fragmentInfo);
         fragmentInfoLists.add(fragmentInfoList);
 
@@ -121,11 +150,11 @@ public class ArtistPagerFragment extends PagerFragment {
         fragmentInfo.mClass = BiographyFragment.class;
         fragmentInfo.mTitle = getString(R.string.biography);
         fragmentInfo.mBundle = getChildFragmentBundle();
-        fragmentInfo.mBundle.putString(TomahawkFragment.ARTIST, mArtist.getCacheKey());
+        fragmentInfo.mBundle
+                .putString(TomahawkFragment.ARTIST, mArtist.getCacheKey());
         fragmentInfoList.addFragmentInfo(fragmentInfo);
         fragmentInfoLists.add(fragmentInfoList);
-
-        setupPager(fragmentInfoLists, initialPage, null);
+        return fragmentInfoLists;
     }
 
     @Override

@@ -55,7 +55,7 @@ public class FragmentUtils {
      */
     public static void addRootFragment(TomahawkMainActivity activity, User loggedInUser) {
         FragmentTransaction ft = activity.getSupportFragmentManager().beginTransaction();
-        if (loggedInUser != null) {
+        if (!loggedInUser.isOffline()) {
             Bundle bundle = new Bundle();
             bundle.putString(TomahawkFragment.USER, loggedInUser.getId());
             bundle.putInt(TomahawkFragment.SHOW_MODE, SocialActionsFragment.SHOW_MODE_DASHBOARD);
@@ -125,7 +125,7 @@ public class FragmentUtils {
         FragmentTransaction ft = activity.getSupportFragmentManager().beginTransaction();
         ft.add(frameResId, Fragment.instantiate(activity, clss.getName(), bundle), FRAGMENT_TAG);
         ft.addToBackStack(FRAGMENT_TAG);
-        ft.setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE);
+        ft.setTransition(FragmentTransaction.TRANSIT_FRAGMENT_OPEN);
         ft.commit();
     }
 
@@ -139,7 +139,7 @@ public class FragmentUtils {
      *                     album's tracklist from a specific collection)
      */
     public static boolean showContextMenu(TomahawkMainActivity activity, Object item,
-            String collectionId, boolean isFromPlaybackFragment) {
+            String collectionId, boolean isFromPlaybackFragment, boolean hideRemoveButton) {
         if (item == null
                 || (item instanceof SocialAction
                 && ((SocialAction) item).getTargetObject() instanceof User)
@@ -153,6 +153,9 @@ public class FragmentUtils {
         }
         if (isFromPlaybackFragment) {
             args.putBoolean(TomahawkFragment.FROM_PLAYBACKFRAGMENT, true);
+            args.putBoolean(TomahawkFragment.HIDE_REMOVE_BUTTON, true);
+        } else if (hideRemoveButton) {
+            args.putBoolean(TomahawkFragment.HIDE_REMOVE_BUTTON, true);
         }
         if (item instanceof Query) {
             args.putString(TomahawkFragment.TOMAHAWKLISTITEM,

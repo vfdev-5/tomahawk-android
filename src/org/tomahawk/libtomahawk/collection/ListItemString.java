@@ -17,15 +17,10 @@
  */
 package org.tomahawk.libtomahawk.collection;
 
-import org.tomahawk.libtomahawk.resolver.Query;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
-
-import java.util.ArrayList;
-
 /**
  * This class represents an {@link ListItemString}.
  */
-public class ListItemString implements TomahawkListItem {
+public class ListItemString {
 
     private final String mText;
 
@@ -51,34 +46,8 @@ public class ListItemString implements TomahawkListItem {
         }
     }
 
-    @Override
-    public String getCacheKey() {
+    public String getText() {
         return mText;
-    }
-
-    @Override
-    public String getName() {
-        return mText;
-    }
-
-    @Override
-    public Artist getArtist() {
-        return null;
-    }
-
-    @Override
-    public Album getAlbum() {
-        return null;
-    }
-
-    @Override
-    public ArrayList<Query> getQueries() {
-        return null;
-    }
-
-    @Override
-    public Image getImage() {
-        return null;
     }
 
     public boolean isHighlighted() {

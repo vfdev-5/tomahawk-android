@@ -18,12 +18,10 @@
  */
 package org.tomahawk.tomahawk_android.fragments;
 
-import com.google.common.collect.Sets;
-
-import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
-import org.tomahawk.libtomahawk.authentication.HatchetAuthenticatorUtils;
+import org.jdeferred.DoneCallback;
 import org.tomahawk.libtomahawk.collection.Album;
 import org.tomahawk.libtomahawk.collection.Artist;
+import org.tomahawk.libtomahawk.collection.Collection;
 import org.tomahawk.libtomahawk.collection.CollectionManager;
 import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.collection.PlaylistEntry;
@@ -35,22 +33,30 @@ import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
+import org.tomahawk.tomahawk_android.adapters.Segment;
 import org.tomahawk.tomahawk_android.adapters.TomahawkListAdapter;
 import org.tomahawk.tomahawk_android.services.PlaybackService;
 import org.tomahawk.tomahawk_android.utils.FragmentUtils;
 import org.tomahawk.tomahawk_android.utils.MultiColumnClickListener;
 import org.tomahawk.tomahawk_android.utils.ThreadManager;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
+import org.tomahawk.tomahawk_android.utils.TomahawkRunnable;
 import org.tomahawk.tomahawk_android.utils.WeakReferenceHandler;
 
+import android.annotation.SuppressLint;
+import android.content.SharedPreferences;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
+import android.preference.PreferenceManager;
 import android.text.TextUtils;
+import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.AbsListView;
-import android.widget.BaseAdapter;
+import android.widget.AdapterView;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -59,12 +65,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import se.emilsjolander.stickylistheaders.StickyListHeadersListView;
 
 /**
- * The base class for {@link AlbumsFragment}, {@link TracksFragment}, {@link ArtistsFragment},
- * {@link PlaylistsFragment} and {@link SearchPagerFragment}. Provides all sorts of functionality to
- * those classes, related to displaying {@link TomahawkListItem}s in whichever needed way.
+ * The base class for every {@link android.support.v4.app.Fragment} that displays a collection
+ * object
  */
 public abstract class TomahawkFragment extends TomahawkListFragment
         implements MultiColumnClickListener, AbsListView.OnScrollListener {
+
+    public static final String TAG = TomahawkFragment.class.getSimpleName();
 
     public static final String ALBUM = "album";
 
@@ -90,31 +97,17 @@ public abstract class TomahawkFragment extends TomahawkListFragment
 
     public static final String PREFERENCEID = "preferenceid";
 
-    public static final String SHOWDELETE = "showdelete";
-
     public static final String TOMAHAWKLISTITEM = "tomahawklistitem";
 
     public static final String TOMAHAWKLISTITEM_TYPE = "tomahawklistitem_type";
 
     public static final String FROM_PLAYBACKFRAGMENT = "from_playbackfragment";
 
-    public static final String USERNAME_STRING = "username_string";
-
-    public static final String PASSWORD_STRING = "password_string";
+    public static final String HIDE_REMOVE_BUTTON = "hide_remove_button";
 
     public static final String QUERY_STRING = "query_string";
 
     public static final String SHOW_MODE = "show_mode";
-
-    public static final String COLLECTION_ID = "collection_id";
-
-    public static final String LOG_DATA = "log_data";
-
-    public static final String CONTENT_HEADER_MODE = "content_header_mode";
-
-    public static final String CONTAINER_FRAGMENT_ID = "container_fragment_id";
-
-    public static final String CONTAINER_FRAGMENT_PAGE = "container_fragment_page";
 
     public static final String CONTAINER_FRAGMENT_CLASSNAME = "container_fragment_classname";
 
@@ -135,14 +128,12 @@ public abstract class TomahawkFragment extends TomahawkListFragment
     protected boolean mIsResumed;
 
     protected final Set<String> mCorrespondingRequestIds =
-            Sets.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
-    protected final HashSet<TomahawkListItem> mResolvingItems = new HashSet<>();
+    protected final HashSet<Object> mResolvingItems = new HashSet<>();
 
-    protected final Set<Query> mCorrespondingQueries
-            = Sets.newSetFromMap(new ConcurrentHashMap<Query, Boolean>());
-
-    protected ArrayList<Query> mShownQueries = new ArrayList<>();
+    protected final Set<Query> mCorrespondingQueries =
+            Collections.newSetFromMap(new ConcurrentHashMap<Query, Boolean>());
 
     protected ArrayList<Query> mQueryArray;
 
@@ -151,8 +142,6 @@ public abstract class TomahawkFragment extends TomahawkListFragment
     protected ArrayList<Artist> mArtistArray;
 
     protected ArrayList<User> mUserArray;
-
-    protected final ArrayList<PlaylistEntry> mShownPlaylistEntries = new ArrayList<>();
 
     protected Album mAlbum;
 
@@ -168,9 +157,9 @@ public abstract class TomahawkFragment extends TomahawkListFragment
 
     private int mVisibleItemCount = 0;
 
-    protected int mShowMode;
+    protected int mShowMode = -1;
 
-    protected final Handler mResolveQueriesHandler = new ResolveQueriesHandler(this);
+    private final Handler mResolveQueriesHandler = new ResolveQueriesHandler(this);
 
     private static class ResolveQueriesHandler extends WeakReferenceHandler<TomahawkFragment> {
 
@@ -286,12 +275,12 @@ public abstract class TomahawkFragment extends TomahawkListFragment
         if (getArguments() != null) {
             if (getArguments().containsKey(ALBUM)
                     && !TextUtils.isEmpty(getArguments().getString(ALBUM))) {
-                mAlbum = Album.getAlbumByKey(getArguments().getString(ALBUM));
+                mAlbum = Album.getByKey(getArguments().getString(ALBUM));
                 if (mAlbum == null) {
                     getActivity().getSupportFragmentManager().popBackStack();
                     return;
                 } else {
-                    String requestId = InfoSystem.getInstance().resolve(mAlbum);
+                    String requestId = InfoSystem.get().resolve(mAlbum);
                     if (requestId != null) {
                         mCorrespondingRequestIds.add(requestId);
                     }
@@ -299,34 +288,32 @@ public abstract class TomahawkFragment extends TomahawkListFragment
             }
             if (getArguments().containsKey(PLAYLIST)
                     && !TextUtils.isEmpty(getArguments().getString(PLAYLIST))) {
-                String playlistId = getArguments().getString(TomahawkFragment.PLAYLIST);
-                mPlaylist = DatabaseHelper.getInstance().getPlaylist(playlistId);
+                mPlaylist = Playlist.getByKey(getArguments().getString(TomahawkFragment.PLAYLIST));
                 if (mPlaylist == null) {
-                    mPlaylist = Playlist.getPlaylistById(playlistId);
-                    if (mPlaylist == null) {
-                        getActivity().getSupportFragmentManager().popBackStack();
-                        return;
-                    } else {
-                        HatchetAuthenticatorUtils authenticatorUtils
-                                = (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
-                                .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-                        if (mUser != authenticatorUtils.getLoggedInUser()) {
-                            String requestId = InfoSystem.getInstance().resolve(mPlaylist);
-                            if (requestId != null) {
-                                mCorrespondingRequestIds.add(requestId);
+                    getActivity().getSupportFragmentManager().popBackStack();
+                    return;
+                } else {
+                    User.getSelf().done(new DoneCallback<User>() {
+                        @Override
+                        public void onDone(User user) {
+                            if (mUser != user) {
+                                String requestId = InfoSystem.get().resolve(mPlaylist);
+                                if (requestId != null) {
+                                    mCorrespondingRequestIds.add(requestId);
+                                }
                             }
                         }
-                    }
+                    });
                 }
             }
             if (getArguments().containsKey(ARTIST)
                     && !TextUtils.isEmpty(getArguments().getString(ARTIST))) {
-                mArtist = Artist.getArtistByKey(getArguments().getString(ARTIST));
+                mArtist = Artist.getByKey(getArguments().getString(ARTIST));
                 if (mArtist == null) {
                     getActivity().getSupportFragmentManager().popBackStack();
                     return;
                 } else {
-                    ArrayList<String> requestIds = InfoSystem.getInstance().resolve(mArtist, false);
+                    ArrayList<String> requestIds = InfoSystem.get().resolve(mArtist, false);
                     for (String requestId : requestIds) {
                         mCorrespondingRequestIds.add(requestId);
                     }
@@ -339,25 +326,21 @@ public abstract class TomahawkFragment extends TomahawkListFragment
                     getActivity().getSupportFragmentManager().popBackStack();
                     return;
                 } else if (mUser.getName() == null) {
-                    String requestId = InfoSystem.getInstance().resolve(mUser);
+                    String requestId = InfoSystem.get().resolve(mUser);
                     if (requestId != null) {
                         mCorrespondingRequestIds.add(requestId);
                     }
                 }
             }
-            if (getArguments().containsKey(COLLECTION_ID)) {
-                mCollection = CollectionManager.getInstance()
-                        .getCollection(getArguments().getString(COLLECTION_ID));
-            }
             if (getArguments().containsKey(QUERY)
                     && !TextUtils.isEmpty(getArguments().getString(QUERY))) {
-                mQuery = Query.getQueryByKey(getArguments().getString(QUERY));
+                mQuery = Query.getByKey(getArguments().getString(QUERY));
                 if (mQuery == null) {
                     getActivity().getSupportFragmentManager().popBackStack();
                     return;
                 } else {
                     ArrayList<String> requestIds =
-                            InfoSystem.getInstance().resolve(mQuery.getArtist(), false);
+                            InfoSystem.get().resolve(mQuery.getArtist(), false);
                     for (String requestId : requestIds) {
                         mCorrespondingRequestIds.add(requestId);
                     }
@@ -371,8 +354,8 @@ public abstract class TomahawkFragment extends TomahawkListFragment
             }
             if (getArguments().containsKey(ARTISTARRAY)) {
                 mArtistArray = new ArrayList<>();
-                for (String userId : getArguments().getStringArrayList(ARTISTARRAY)) {
-                    Artist artist = Artist.getArtistByKey(userId);
+                for (String artistKey : getArguments().getStringArrayList(ARTISTARRAY)) {
+                    Artist artist = Artist.getByKey(artistKey);
                     if (artist != null) {
                         mArtistArray.add(artist);
                     }
@@ -380,8 +363,8 @@ public abstract class TomahawkFragment extends TomahawkListFragment
             }
             if (getArguments().containsKey(ALBUMARRAY)) {
                 mAlbumArray = new ArrayList<>();
-                for (String userId : getArguments().getStringArrayList(ALBUMARRAY)) {
-                    Album album = Album.getAlbumByKey(userId);
+                for (String albumKey : getArguments().getStringArrayList(ALBUMARRAY)) {
+                    Album album = Album.getByKey(albumKey);
                     if (album != null) {
                         mAlbumArray.add(album);
                     }
@@ -389,12 +372,15 @@ public abstract class TomahawkFragment extends TomahawkListFragment
             }
             if (getArguments().containsKey(QUERYARRAY)) {
                 mQueryArray = new ArrayList<>();
-                for (String userId : getArguments().getStringArrayList(QUERYARRAY)) {
-                    Query query = Query.getQueryByKey(userId);
+                for (String queryKey : getArguments().getStringArrayList(QUERYARRAY)) {
+                    Query query = Query.getByKey(queryKey);
                     if (query != null) {
                         mQueryArray.add(query);
                     }
                 }
+            }
+            if (getArguments().containsKey(SHOW_MODE)) {
+                mShowMode = getArguments().getInt(SHOW_MODE);
             }
         }
 
@@ -417,7 +403,7 @@ public abstract class TomahawkFragment extends TomahawkListFragment
         super.onPause();
 
         for (Query query : mCorrespondingQueries) {
-            if (ThreadManager.getInstance().stop(query)) {
+            if (ThreadManager.get().stop(query)) {
                 mCorrespondingQueries.remove(query);
             }
         }
@@ -425,6 +411,12 @@ public abstract class TomahawkFragment extends TomahawkListFragment
         mAdapterUpdateHandler.removeCallbacksAndMessages(null);
 
         mIsResumed = false;
+
+        if (mTomahawkListAdapter != null) {
+            mTomahawkListAdapter.closeSegments();
+            setListAdapter(null);
+            mTomahawkListAdapter = null;
+        }
     }
 
     @Override
@@ -437,44 +429,84 @@ public abstract class TomahawkFragment extends TomahawkListFragment
      */
     @Override
     public boolean onItemLongClick(View view, Object item) {
-        String collectionId = mCollection != null ? mCollection.getId() : null;
         return FragmentUtils.showContextMenu((TomahawkMainActivity) getActivity(), item,
-                collectionId, false);
+                mCollection.getId(), false, mHideRemoveButton);
+    }
+
+    protected void fillAdapter(Segment segment, Collection collection) {
+        List<Segment> segments = new ArrayList<>();
+        segments.add(segment);
+        fillAdapter(segments, null, collection);
+    }
+
+    protected void fillAdapter(Segment segment) {
+        List<Segment> segments = new ArrayList<>();
+        segments.add(segment);
+        fillAdapter(segments, null, null);
+    }
+
+    protected void fillAdapter(List<Segment> segments) {
+        fillAdapter(segments, null, null);
+    }
+
+    protected void fillAdapter(final List<Segment> segments, final View headerSpacerForwardView,
+            final Collection collection) {
+        final TomahawkMainActivity activity = (TomahawkMainActivity) getActivity();
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                if (activity != null && getListView() != null) {
+                    if (mTomahawkListAdapter == null) {
+                        LayoutInflater inflater = activity.getLayoutInflater();
+                        TomahawkListAdapter adapter = new TomahawkListAdapter(activity,
+                                inflater,
+                                segments, collection, getListView(), TomahawkFragment.this);
+                        TomahawkFragment.super.setListAdapter(adapter);
+                        mTomahawkListAdapter = adapter;
+                        getListView().setOnItemClickListener(mTomahawkListAdapter);
+                        getListView().setOnItemLongClickListener(mTomahawkListAdapter);
+                    } else {
+                        mTomahawkListAdapter.setSegments(segments, getListView());
+                    }
+                    updateShowPlaystate();
+                    forceResolveVisibleItems(false);
+                    setupNonScrollableSpacer(getListView());
+                    setupScrollableSpacer(getListAdapter(), getListView(),
+                            headerSpacerForwardView);
+                    if (headerSpacerForwardView == null) {
+                        setupAnimations();
+                    }
+                } else {
+                    Log.e(TAG, "fillAdapter - getActivity() or getListView() returned null!");
+                }
+            }
+        });
     }
 
     /**
-     * Get the {@link BaseAdapter} associated with this activity's ListView.
+     * Get the {@link TomahawkListAdapter} associated with this activity's ListView.
      */
     public TomahawkListAdapter getListAdapter() {
-        return mTomahawkListAdapter;
+        return (TomahawkListAdapter) super.getListAdapter();
     }
 
-    /**
-     * Set the {@link BaseAdapter} associated with this activity's ListView.
-     */
-    public void setListAdapter(TomahawkListAdapter adapter) {
-        super.setListAdapter(adapter);
-        mTomahawkListAdapter = adapter;
-        getListView().setOnItemClickListener(mTomahawkListAdapter);
-        getListView().setOnItemLongClickListener(mTomahawkListAdapter);
+    protected void setAreHeadersSticky(final boolean areHeadersSticky) {
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                if (getListView() != null) {
+                    getListView().setAreHeadersSticky(areHeadersSticky);
+                } else {
+                    Log.e(TAG, "setAreHeadersSticky - getListView() returned null!");
+                }
+            }
+        });
     }
 
     /**
      * Update this {@link TomahawkFragment}'s {@link TomahawkListAdapter} content
      */
     protected abstract void updateAdapter();
-
-    /**
-     * This method _MUST_ be called at the end of updateAdapter (with the exception of
-     * PlaybackFragment)
-     */
-    protected void onUpdateAdapterFinished() {
-        updateShowPlaystate();
-        forceResolveVisibleItems(false);
-        setupNonScrollableSpacer();
-        setupScrollableSpacer();
-        setupAnimations();
-    }
 
     /**
      * If the PlaybackService signals, that it is ready, this method is being called
@@ -507,19 +539,19 @@ public abstract class TomahawkFragment extends TomahawkListFragment
         updateShowPlaystate();
     }
 
-    protected void updateShowPlaystate() {
+    private void updateShowPlaystate() {
         PlaybackService playbackService = ((TomahawkMainActivity) getActivity())
                 .getPlaybackService();
-        if (getListAdapter() != null) {
+        if (mTomahawkListAdapter != null) {
             if (playbackService != null) {
-                getListAdapter().setShowPlaystate(true);
-                getListAdapter().setHighlightedItemIsPlaying(playbackService.isPlaying());
-                getListAdapter().setHighlightedEntry(playbackService.getCurrentEntry());
-                getListAdapter().setHighlightedQuery(playbackService.getCurrentQuery());
+                mTomahawkListAdapter.setShowPlaystate(true);
+                mTomahawkListAdapter.setHighlightedItemIsPlaying(playbackService.isPlaying());
+                mTomahawkListAdapter.setHighlightedEntry(playbackService.getCurrentEntry());
+                mTomahawkListAdapter.setHighlightedQuery(playbackService.getCurrentQuery());
             } else {
-                getListAdapter().setShowPlaystate(false);
+                mTomahawkListAdapter.setShowPlaystate(false);
             }
-            getListAdapter().notifyDataSetChanged();
+            mTomahawkListAdapter.notifyDataSetChanged();
         }
     }
 
@@ -537,8 +569,8 @@ public abstract class TomahawkFragment extends TomahawkListFragment
         }
     }
 
-    protected void forceResolveVisibleItems(boolean wipeQueryCache) {
-        if (wipeQueryCache) {
+    protected void forceResolveVisibleItems(boolean reresolve) {
+        if (reresolve) {
             mCorrespondingQueries.clear();
         }
         mResolveQueriesHandler.removeCallbacksAndMessages(null);
@@ -547,71 +579,149 @@ public abstract class TomahawkFragment extends TomahawkListFragment
     }
 
     private void resolveVisibleItems() {
-        resolveQueriesFromTo(mFirstVisibleItemLastTime - 5,
-                mFirstVisibleItemLastTime + mVisibleItemCount + 5);
-        resolveItemsFromTo(mFirstVisibleItemLastTime,
-                mFirstVisibleItemLastTime + mVisibleItemCount + 1);
+        resolveItemsFromTo(mFirstVisibleItemLastTime - 2,
+                mFirstVisibleItemLastTime + mVisibleItemCount + 2);
     }
 
-    private void resolveQueriesFromTo(final int start, final int end) {
-        Set<Query> qs = new HashSet<>();
-        for (int i = (start < 0 ? 0 : start); i < end && i < mShownQueries.size(); i++) {
-            Query q = mShownQueries.get(i);
-            if (!q.isSolved() && !mCorrespondingQueries.contains(q)) {
-                qs.add(q);
-            }
-        }
-        if (!qs.isEmpty()) {
-            HashSet<Query> queries = PipeLine.getInstance().resolve(qs);
-            mCorrespondingQueries.addAll(queries);
-        }
-    }
-
-    private void resolveItemsFromTo(final int start, final int end) {
+    private void resolveItemsFromTo(int start, int end) {
         if (mTomahawkListAdapter != null) {
-            for (int i = (start < 0 ? 0 : start); i < end && i < mTomahawkListAdapter.getCount();
-                    i++) {
+            start = Math.max(start, 0);
+            end = Math.min(end, mTomahawkListAdapter.getCount());
+            for (int i = start; i < end; i++) {
                 Object object = mTomahawkListAdapter.getItem(i);
                 if (object instanceof List) {
                     for (Object item : (List) object) {
-                        if (item instanceof TomahawkListItem) {
-                            resolveItem((TomahawkListItem) item);
-                        }
+                        resolveItem(item);
                     }
-                } else if (object instanceof TomahawkListItem) {
-                    resolveItem((TomahawkListItem) object);
+                } else {
+                    resolveItem(object);
                 }
             }
         }
     }
 
-    protected void resolveItem(TomahawkListItem item) {
-        InfoSystem infoSystem = InfoSystem.getInstance();
-        if (!mResolvingItems.contains(item)) {
-            mResolvingItems.add(item);
-            if (item instanceof SocialAction) {
-                resolveItem(((SocialAction) item).getTargetObject());
-                resolveItem(((SocialAction) item).getUser());
-            } else if (item instanceof Album) {
-                if (item.getImage() == null) {
-                    String requestId = InfoSystem.getInstance().resolve((Album) item);
-                    if (requestId != null) {
-                        mCorrespondingRequestIds.add(requestId);
-                    }
+    private void resolveItem(final Object object) {
+        if (object instanceof PlaylistEntry || object instanceof Query) {
+            Query query;
+            if (object instanceof PlaylistEntry) {
+                PlaylistEntry entry = (PlaylistEntry) object;
+                query = entry.getQuery();
+            } else {
+                query = (Query) object;
+            }
+            if (!mCorrespondingQueries.contains(query)) {
+                mCorrespondingQueries.add(PipeLine.get().resolve(query));
+            }
+        } else if (object instanceof Playlist) {
+            resolveItem((Playlist) object);
+        } else if (object instanceof SocialAction) {
+            resolveItem((SocialAction) object);
+        } else if (object instanceof Album) {
+            resolveItem((Album) object);
+        } else if (object instanceof Artist) {
+            resolveItem((Artist) object);
+        } else if (object instanceof User) {
+            resolveItem((User) object);
+        }
+    }
+
+    private void resolveItem(final Playlist playlist) {
+        User.getSelf().done(new DoneCallback<User>() {
+            @Override
+            public void onDone(User user) {
+                if (mUser == null || mUser == user) {
+                    TomahawkRunnable r = new TomahawkRunnable(
+                            TomahawkRunnable.PRIORITY_IS_DATABASEACTION) {
+                        @Override
+                        public void run() {
+                            if (mResolvingItems.add(playlist)) {
+                                Playlist pl = playlist;
+                                if (pl.size() == 0) {
+                                    pl = DatabaseHelper.get().getPlaylist(pl.getId());
+                                }
+                                if (pl != null && pl.size() > 0) {
+                                    pl.updateTopArtistNames();
+                                    DatabaseHelper.get().updatePlaylist(pl);
+                                    if (pl.getTopArtistNames() != null) {
+                                        for (int i = 0; i < pl.getTopArtistNames().length && i < 5;
+                                                i++) {
+                                            resolveItem(Artist.get(pl.getTopArtistNames()[i]));
+                                        }
+                                    }
+                                } else {
+                                    mResolvingItems.remove(pl);
+                                }
+                            }
+                        }
+                    };
+                    ThreadManager.get().execute(r);
                 }
-            } else if (item instanceof Artist) {
-                if (item.getImage() == null) {
-                    mCorrespondingRequestIds.addAll(infoSystem.resolve((Artist) item, false));
-                }
-            } else if (item instanceof User) {
-                if (item.getImage() == null) {
-                    String requestId = InfoSystem.getInstance().resolve((User) item);
-                    if (requestId != null) {
-                        mCorrespondingRequestIds.add(requestId);
-                    }
+            }
+        });
+    }
+
+    private void resolveItem(SocialAction socialAction) {
+        if (mResolvingItems.add(socialAction)) {
+            if (socialAction.getTargetObject() != null) {
+                resolveItem(socialAction.getTargetObject());
+            }
+            resolveItem(socialAction.getUser());
+        }
+    }
+
+    private void resolveItem(Album album) {
+        if (mResolvingItems.add(album)) {
+            if (album.getImage() == null) {
+                String requestId = InfoSystem.get().resolve(album);
+                if (requestId != null) {
+                    mCorrespondingRequestIds.add(requestId);
                 }
             }
         }
+    }
+
+    private void resolveItem(Artist artist) {
+        if (mResolvingItems.add(artist)) {
+            if (artist.getImage() == null) {
+                mCorrespondingRequestIds.addAll(InfoSystem.get().resolve(artist, false));
+            }
+        }
+    }
+
+    private void resolveItem(User user) {
+        if (mResolvingItems.add(user)) {
+            if (user.getImage() == null) {
+                String requestId = InfoSystem.get().resolve(user);
+                if (requestId != null) {
+                    mCorrespondingRequestIds.add(requestId);
+                }
+            }
+        }
+    }
+
+    protected AdapterView.OnItemSelectedListener constructDropdownListener(final String prefKey) {
+        return new AdapterView.OnItemSelectedListener() {
+            @SuppressLint("CommitPrefEdits")
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (getDropdownPos(prefKey) != position) {
+                    SharedPreferences preferences = PreferenceManager
+                            .getDefaultSharedPreferences(TomahawkApp.getContext());
+                    preferences.edit().putInt(prefKey, position).commit();
+                    updateAdapter();
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        };
+    }
+
+    protected int getDropdownPos(String prefKey) {
+        SharedPreferences preferences = PreferenceManager
+                .getDefaultSharedPreferences(TomahawkApp.getContext());
+        return preferences.getInt(prefKey, 0);
     }
 }
 

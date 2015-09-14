@@ -17,8 +17,10 @@
  */
 package org.tomahawk.tomahawk_android.adapters;
 
+import org.jdeferred.DoneCallback;
 import org.tomahawk.libtomahawk.collection.Album;
 import org.tomahawk.libtomahawk.collection.Artist;
+import org.tomahawk.libtomahawk.collection.Collection;
 import org.tomahawk.libtomahawk.collection.CollectionManager;
 import org.tomahawk.libtomahawk.collection.Image;
 import org.tomahawk.libtomahawk.collection.Playlist;
@@ -27,11 +29,12 @@ import org.tomahawk.libtomahawk.infosystem.User;
 import org.tomahawk.libtomahawk.infosystem.hatchet.HatchetInfoPlugin;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.libtomahawk.resolver.Resolver;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.resolver.ScriptResolver;
+import org.tomahawk.libtomahawk.utils.ImageUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.fragments.PlaylistsFragment;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
 import org.tomahawk.tomahawk_android.views.PlaybackPanel;
 
 import android.content.res.Resources;
@@ -63,7 +66,7 @@ public class ViewHolder {
     }
 
     public View ensureInflation(int stubResId, int inflatedId) {
-        return TomahawkUtils.ensureInflation(mRootView, stubResId, inflatedId);
+        return ViewUtils.ensureInflation(mRootView, stubResId, inflatedId);
     }
 
     public View findViewById(int id) {
@@ -87,7 +90,7 @@ public class ViewHolder {
     public void fillView(Query query, String numerationString, boolean showAsPlaying,
             View.OnClickListener swipeMenuButton1Listener, boolean showAsQueued) {
         TextView trackNameTextView = (TextView) findViewById(R.id.track_textview);
-        trackNameTextView.setText(query.getName());
+        trackNameTextView.setText(query.getPrettyName());
         setTextViewEnabled(trackNameTextView, query.isPlayable(), false);
 
         ImageView resolverImageView = (ImageView) ensureInflation(R.id.resolver_imageview_stub,
@@ -99,7 +102,7 @@ public class ViewHolder {
             }
             if (resolverImageView != null) {
                 resolverImageView.setVisibility(View.VISIBLE);
-                TomahawkUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), resolverImageView,
+                ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), resolverImageView,
                         R.drawable.ic_action_queue_red);
             }
         } else if (showAsPlaying) {
@@ -126,13 +129,13 @@ public class ViewHolder {
         if (mLayoutId == R.layout.list_item_numeration_track_artist
                 || mLayoutId == R.layout.list_item_track_artist) {
             TextView artistNameTextView = (TextView) findViewById(R.id.artist_textview);
-            artistNameTextView.setText(query.getArtist().getName());
+            artistNameTextView.setText(query.getArtist().getPrettyName());
             setTextViewEnabled(artistNameTextView, query.isPlayable(), false);
         }
         if (mLayoutId == R.layout.list_item_numeration_track_duration) {
             TextView durationTextView = (TextView) findViewById(R.id.duration_textview);
             if (query.getPreferredTrack().getDuration() > 0) {
-                durationTextView.setText(TomahawkUtils.durationToString(
+                durationTextView.setText(ViewUtils.durationToString(
                         (query.getPreferredTrack().getDuration())));
             } else {
                 durationTextView.setText(PlaybackPanel.COMPLETION_STRING_DEFAULT);
@@ -145,7 +148,7 @@ public class ViewHolder {
                     R.id.swipe_menu_button_dequeue);
             swipeMenuButton.setVisibility(View.VISIBLE);
             swipeMenuButton.setImageResource(R.drawable.ic_player_exit_light);
-            TomahawkUtils.setTint(swipeMenuButton.getDrawable(), R.color.tomahawk_red);
+            ImageUtils.setTint(swipeMenuButton.getDrawable(), R.color.tomahawk_red);
             ImageView swipeMenuButtonEnqueue =
                     (ImageView) findViewById(R.id.swipe_menu_button_enqueue);
             if (swipeMenuButtonEnqueue != null) {
@@ -174,44 +177,50 @@ public class ViewHolder {
         textView1.setText(user.getName());
         if (mLayoutId == R.layout.list_item_user) {
             TextView textView2 = (TextView) findViewById(R.id.textview2);
-            textView2.setText(TomahawkApp.getContext().getString(R.string.followers_count,
-                    user.getFollowersCount(), user.getFollowCount()));
+            if (user.getFollowersCount() >= 0 && user.getFollowCount() >= 0) {
+                textView2.setText(TomahawkApp.getContext().getString(R.string.followers_count,
+                        user.getFollowersCount(), user.getFollowCount()));
+            }
         }
         TextView userTextView1 = (TextView) findViewById(R.id.usertextview1);
         ImageView userImageView1 = (ImageView) findViewById(R.id.userimageview1);
-        TomahawkUtils.loadUserImageIntoImageView(TomahawkApp.getContext(),
+        ImageUtils.loadUserImageIntoImageView(TomahawkApp.getContext(),
                 userImageView1, user, Image.getSmallImageSize(),
                 userTextView1);
     }
 
     public void fillView(Artist artist) {
         TextView textView1 = (TextView) findViewById(R.id.textview1);
-        textView1.setText(artist.getName());
+        textView1.setText(artist.getPrettyName());
         ImageView imageView1 = (ImageView) findViewById(R.id.imageview1);
-        TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(), imageView1,
+        ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(), imageView1,
                 artist.getImage(), Image.getSmallImageSize(), true);
     }
 
-    public void fillView(Album album) {
+    public void fillView(final Album album, Collection collection) {
+        if (collection == null) {
+            collection =
+                    CollectionManager.get().getCollection(TomahawkApp.PLUGINNAME_HATCHET);
+        }
         TextView textView1 = (TextView) findViewById(R.id.textview1);
-        textView1.setText(album.getName());
+        textView1.setText(album.getPrettyName());
         TextView textView2 = (TextView) findViewById(R.id.textview2);
-        textView2.setText(album.getArtist().getName());
+        textView2.setText(album.getArtist().getPrettyName());
         ImageView imageView1 = (ImageView) findViewById(R.id.imageview1);
-        TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(), imageView1,
+        ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(), imageView1,
                 album.getImage(), Image.getSmallImageSize(), false);
-        int songCount = CollectionManager.getInstance().getCollection(
-                TomahawkApp.PLUGINNAME_USERCOLLECTION).getAlbumTracks(album, false).size();
-        if (songCount == 0) {
-            songCount = CollectionManager.getInstance().getCollection(
-                    TomahawkApp.PLUGINNAME_HATCHET).getAlbumTracks(album, false).size();
-        }
-        TextView textView3 = (TextView) findViewById(R.id.textview3);
-        if (songCount > 0) {
-            textView3.setVisibility(View.VISIBLE);
-            textView3.setText(TomahawkApp.getContext().getResources()
-                    .getQuantityString(R.plurals.songs_with_count, songCount, songCount));
-        }
+        final TextView textView3 = (TextView) findViewById(R.id.textview3);
+        textView3.setVisibility(View.INVISIBLE);
+        collection.getAlbumTrackCount(album).done(new DoneCallback<Integer>() {
+            @Override
+            public void onDone(Integer trackCount) {
+                if (trackCount != null) {
+                    textView3.setVisibility(View.VISIBLE);
+                    textView3.setText(TomahawkApp.getContext().getResources().getQuantityString(
+                            R.plurals.songs_with_count, trackCount, trackCount));
+                }
+            }
+        });
     }
 
     public void fillView(Resolver resolver) {
@@ -219,9 +228,27 @@ public class ViewHolder {
         textView1.setText(resolver.getPrettyName());
         ImageView imageView1 = (ImageView) findViewById(R.id.imageview1);
         imageView1.clearColorFilter();
-        resolver.loadIconBackground(imageView1, !resolver.isEnabled());
+        if (!(resolver instanceof ScriptResolver) ||
+                ((ScriptResolver) resolver).getScriptAccount().getMetaData()
+                        .manifest.iconBackground != null) {
+            resolver.loadIconBackground(imageView1, !resolver.isEnabled());
+        } else {
+            if (resolver.isEnabled()) {
+                imageView1.setBackgroundColor(TomahawkApp.getContext().getResources()
+                        .getColor(android.R.color.black));
+            } else {
+                imageView1.setBackgroundColor(TomahawkApp.getContext().getResources()
+                        .getColor(R.color.fallback_resolver_bg));
+            }
+        }
         ImageView imageView2 = (ImageView) findViewById(R.id.imageview2);
-        resolver.loadIconWhite(imageView2);
+        if (!(resolver instanceof ScriptResolver) ||
+                ((ScriptResolver) resolver).getScriptAccount().getMetaData()
+                        .manifest.iconWhite != null) {
+            resolver.loadIconWhite(imageView2);
+        } else {
+            resolver.loadIcon(imageView2, !resolver.isEnabled());
+        }
         View connectImageViewContainer = findViewById(R.id.connect_imageview);
         if (resolver.isEnabled()) {
             connectImageViewContainer.setVisibility(View.VISIBLE);
@@ -260,7 +287,7 @@ public class ViewHolder {
             textView2.setVisibility(View.VISIBLE);
         }
         TextView textView3 = (TextView) findViewById(R.id.textview3);
-        if (textView3 != null) {
+        if (textView3 != null && playlist.isFilled()) {
             textView3.setVisibility(View.VISIBLE);
             textView3.setText(TomahawkApp.getContext().getResources().getQuantityString(
                     R.plurals.songs_with_count, (int) playlist.getCount(), playlist.getCount()));
@@ -305,15 +332,15 @@ public class ViewHolder {
             if (v != null) {
                 v.setVisibility(View.GONE);
             }
-            v = TomahawkUtils.ensureInflation(view, gridThreeStubId, gridThreeResId);
+            v = ViewUtils.ensureInflation(view, gridThreeStubId, gridThreeResId);
             v.setVisibility(View.VISIBLE);
-            TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(),
+            ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(),
                     (ImageView) v.findViewById(R.id.imageview1),
                     artistImages.get(0), Image.getLargeImageSize(), false);
-            TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(),
+            ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(),
                     (ImageView) v.findViewById(R.id.imageview2),
                     artistImages.get(1), Image.getSmallImageSize(), false);
-            TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(),
+            ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(),
                     (ImageView) v.findViewById(R.id.imageview3),
                     artistImages.get(2), Image.getSmallImageSize(), false);
         } else if (artistImages.size() > 1) {
@@ -325,12 +352,12 @@ public class ViewHolder {
             if (v != null) {
                 v.setVisibility(View.GONE);
             }
-            v = TomahawkUtils.ensureInflation(view, gridTwoStubId, gridTwoResId);
+            v = ViewUtils.ensureInflation(view, gridTwoStubId, gridTwoResId);
             v.setVisibility(View.VISIBLE);
-            TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(),
+            ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(),
                     (ImageView) v.findViewById(R.id.imageview1),
                     artistImages.get(0), Image.getLargeImageSize(), false);
-            TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(),
+            ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(),
                     (ImageView) v.findViewById(R.id.imageview2),
                     artistImages.get(1), Image.getSmallImageSize(), false);
         } else {
@@ -342,14 +369,14 @@ public class ViewHolder {
             if (v != null) {
                 v.setVisibility(View.GONE);
             }
-            v = TomahawkUtils.ensureInflation(view, gridOneStubId, gridOneResId);
+            v = ViewUtils.ensureInflation(view, gridOneStubId, gridOneResId);
             v.setVisibility(View.VISIBLE);
             if (artistImages.size() > 0) {
-                TomahawkUtils.loadImageIntoImageView(TomahawkApp.getContext(),
+                ImageUtils.loadImageIntoImageView(TomahawkApp.getContext(),
                         (ImageView) v.findViewById(R.id.imageview1),
                         artistImages.get(0), Image.getLargeImageSize(), false);
             } else {
-                TomahawkUtils.loadDrawableIntoImageView(TomahawkApp.getContext(),
+                ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(),
                         (ImageView) v.findViewById(R.id.imageview1),
                         R.drawable.album_placeholder_grid);
             }
@@ -374,7 +401,7 @@ public class ViewHolder {
                 if (v != null) {
                     v.setVisibility(View.GONE);
                 }
-                TomahawkUtils.ensureInflation(mRootView, R.id.imageview_create_playlist_stub,
+                ViewUtils.ensureInflation(mRootView, R.id.imageview_create_playlist_stub,
                         R.id.imageview_create_playlist);
                 findViewById(R.id.imageview_create_playlist).setVisibility(View.VISIBLE);
                 TextView textView1 = (TextView) findViewById(R.id.textview1);
@@ -408,10 +435,10 @@ public class ViewHolder {
     public void fillHeaderView(SocialAction socialAction, int segmentSize) {
         ImageView userImageView1 = (ImageView) findViewById(R.id.userimageview1);
         TextView userTextView = (TextView) findViewById(R.id.usertextview1);
-        TomahawkUtils.loadUserImageIntoImageView(TomahawkApp.getContext(),
+        ImageUtils.loadUserImageIntoImageView(TomahawkApp.getContext(),
                 userImageView1, socialAction.getUser(),
                 Image.getSmallImageSize(), userTextView);
-        TomahawkListItem targetObject = socialAction.getTargetObject();
+        Object targetObject = socialAction.getTargetObject();
         Resources resources = TomahawkApp.getContext().getResources();
         String userName = socialAction.getUser().getName();
         String phrase = "!FIXME! type: " + socialAction.getType()

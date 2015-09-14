@@ -18,13 +18,15 @@
  */
 package org.tomahawk.libtomahawk.authentication;
 
+import org.jdeferred.Promise;
 import org.tomahawk.libtomahawk.authentication.models.HatchetAuthResponse;
 import org.tomahawk.libtomahawk.collection.CollectionManager;
 import org.tomahawk.libtomahawk.infosystem.InfoRequestData;
 import org.tomahawk.libtomahawk.infosystem.InfoSystem;
 import org.tomahawk.libtomahawk.infosystem.User;
+import org.tomahawk.libtomahawk.utils.ADeferredObject;
 import org.tomahawk.libtomahawk.utils.GsonHelper;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.VariousUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.utils.ThreadManager;
@@ -93,6 +95,8 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
 
     private final HashSet<String> mCorrespondingRequestIds = new HashSet<>();
 
+    private ADeferredObject<String, Throwable, Void> mGetUserIdPromise;
+
     boolean mWaitingForAccountRemoval;
 
     public static class UserLoginEvent {
@@ -119,7 +123,9 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
             if (event.mInfoRequestData.getType() == InfoRequestData.INFOREQUESTDATA_TYPE_USERS) {
                 List<User> users = event.mInfoRequestData.getResultList(User.class);
                 if (users != null && users.get(0) != null) {
-                    storeUserId(users.get(0).getId());
+                    String userId = users.get(0).getId();
+                    storeUserId(userId);
+                    mGetUserIdPromise.resolve(userId);
                 }
             }
         }
@@ -145,7 +151,7 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
                 ensureAccessTokens();
             }
         }
-        CollectionManager.getInstance().fetchAll();
+        CollectionManager.get().fetchAll();
         AuthenticatorManager.ConfigTestResultEvent event
                 = new AuthenticatorManager.ConfigTestResultEvent();
         event.mComponent = this;
@@ -194,7 +200,7 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
 
     @Override
     public void register(final String name, final String password, final String email) {
-        ThreadManager.getInstance().execute(
+        ThreadManager.get().execute(
                 new TomahawkRunnable(TomahawkRunnable.PRIORITY_IS_AUTHENTICATING) {
                     @Override
                     public void run() {
@@ -234,7 +240,7 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
 
     @Override
     public void login(Activity activity, final String name, final String password) {
-        ThreadManager.getInstance().execute(
+        ThreadManager.get().execute(
                 new TomahawkRunnable(TomahawkRunnable.PRIORITY_IS_AUTHENTICATING) {
                     @Override
                     public void run() {
@@ -308,28 +314,26 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
         return true;
     }
 
-    private String getUserId() {
-        AccountManager am = AccountManager.get(TomahawkApp.getContext());
-        if (am != null && getAccount() != null) {
-            if (am.getUserData(getAccount(), USER_ID_HATCHET) != null) {
-                return am.getUserData(getAccount(), USER_ID_HATCHET);
-            } else {
-                String requestId = InfoSystem.getInstance().resolveUserId(getUserName());
-                if (requestId != null) {
-                    mCorrespondingRequestIds.add(requestId);
+    public Promise<String, Throwable, Void> getUserId() {
+        ADeferredObject<String, Throwable, Void> getUserIdPromise = mGetUserIdPromise;
+        if (getUserIdPromise == null) {
+            getUserIdPromise = new ADeferredObject<>();
+            AccountManager am = AccountManager.get(TomahawkApp.getContext());
+            if (am != null && getAccount() != null) {
+                if (am.getUserData(getAccount(), USER_ID_HATCHET) != null) {
+                    getUserIdPromise.resolve(am.getUserData(getAccount(), USER_ID_HATCHET));
+                } else {
+                    String requestId = InfoSystem.get().resolveUserId(getUserName());
+                    if (requestId != null) {
+                        mCorrespondingRequestIds.add(requestId);
+                    }
                 }
+            } else {
+                getUserIdPromise.reject(new Throwable("No account present."));
+                mGetUserIdPromise = null;
             }
         }
-        return null;
-    }
-
-    public User getLoggedInUser() {
-        if (getUserId() != null) {
-            User user = User.get(getUserId());
-            user.setName(getUserName());
-            return user;
-        }
-        return null;
+        return getUserIdPromise;
     }
 
     /**
@@ -407,7 +411,7 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
                 int currentTime = (int) (System.currentTimeMillis() / 1000);
                 long expirationTime = currentTime + authResponse.expires_in;
                 accessToken = authResponse.access_token;
-                if (TomahawkUtils.containsIgnoreCase(tokenType, RESPONSE_TOKEN_TYPE_BEARER)) {
+                if (VariousUtils.containsIgnoreCase(tokenType, RESPONSE_TOKEN_TYPE_BEARER)) {
                     am.setUserData(getAccount(), MANDELLA_ACCESS_TOKEN_HATCHET, accessToken);
                     am.setUserData(getAccount(), MANDELLA_ACCESS_TOKEN_EXPIRATIONTIME_HATCHET,
                             String.valueOf(expirationTime));
@@ -427,12 +431,10 @@ public class HatchetAuthenticatorUtils extends AuthenticatorUtils {
             HatchetAuthResponse authResponse = (HatchetAuthResponse)
                     e.getBodyAs(HatchetAuthResponse.class);
             if (authResponse != null && (authResponse.error != null
-                    || !TomahawkUtils.containsIgnoreCase(tokenType, authResponse.token_type))) {
+                    || !VariousUtils.containsIgnoreCase(tokenType, authResponse.token_type))) {
                 logout();
                 onLoginFailed(AuthenticatorManager.CONFIG_TEST_RESULT_TYPE_OTHER,
                         "Please reenter your Hatchet credentials");
-            } else {
-                onLoginFailed(AuthenticatorManager.CONFIG_TEST_RESULT_TYPE_COMMERROR, "");
             }
         }
         return accessToken;

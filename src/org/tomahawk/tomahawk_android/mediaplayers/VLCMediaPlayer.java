@@ -21,7 +21,7 @@ import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.libtomahawk.resolver.Result;
 import org.tomahawk.libtomahawk.resolver.ScriptResolver;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.VariousUtils;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.fragments.EqualizerFragment;
 import org.videolan.libvlc.EventHandler;
@@ -98,7 +98,7 @@ public class VLCMediaPlayer implements TomahawkMediaPlayer {
         SharedPreferences pref =
                 PreferenceManager.getDefaultSharedPreferences(TomahawkApp.getContext());
         if (pref.getBoolean(EqualizerFragment.EQUALIZER_ENABLED_PREFERENCE_KEY, false)) {
-            mLibVLC.setEqualizer(TomahawkUtils.getFloatArray(pref,
+            mLibVLC.setEqualizer(VariousUtils.getFloatArray(pref,
                     EqualizerFragment.EQUALIZER_VALUES_PREFERENCE_KEY));
         }
         try {
@@ -114,7 +114,7 @@ public class VLCMediaPlayer implements TomahawkMediaPlayer {
         return mLibVLC;
     }
 
-    public static VLCMediaPlayer getInstance() {
+    public static VLCMediaPlayer get() {
         return Holder.instance;
     }
 
@@ -165,9 +165,9 @@ public class VLCMediaPlayer implements TomahawkMediaPlayer {
      * Prepare the given url
      */
     private TomahawkMediaPlayer prepare(Query query) {
+        release();
         mPreparedQuery = null;
         mPreparingQuery = query;
-        release();
         Result result = query.getPreferredTrackResult();
         String path;
         if (mTranslatedUrls.get(result) != null) {
@@ -204,7 +204,9 @@ public class VLCMediaPlayer implements TomahawkMediaPlayer {
     public void release() {
         Log.d(TAG, "release()");
         EventHandler.getInstance().removeHandler(mVlcHandler);
-        pause();
+        mPreparedQuery = null;
+        mPreparingQuery = null;
+        getLibVlcInstance().stop();
     }
 
     /**

@@ -18,13 +18,15 @@
  */
 package org.tomahawk.libtomahawk.collection;
 
+import org.jdeferred.Deferred;
+import org.jdeferred.Promise;
+import org.tomahawk.libtomahawk.database.CollectionDb;
+import org.tomahawk.libtomahawk.database.CollectionDbManager;
 import org.tomahawk.libtomahawk.database.DatabaseHelper;
-import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Query;
-import org.tomahawk.libtomahawk.resolver.QueryComparator;
-import org.tomahawk.libtomahawk.resolver.Resolver;
-import org.tomahawk.libtomahawk.resolver.Result;
-import org.tomahawk.tomahawk_android.R;
+import org.tomahawk.libtomahawk.resolver.UserCollectionStubResolver;
+import org.tomahawk.libtomahawk.resolver.models.ScriptResolverTrack;
+import org.tomahawk.libtomahawk.utils.ADeferredObject;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.mediaplayers.VLCMediaPlayer;
 import org.tomahawk.tomahawk_android.utils.MediaWrapper;
@@ -49,59 +51,47 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
 import java.util.StringTokenizer;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.ConcurrentHashMap;
 
 import de.greenrobot.event.EventBus;
 
 /**
  * This class represents a user's local {@link UserCollection}.
  */
-public class UserCollection extends Collection {
+public class UserCollection extends DbCollection {
 
     private static final String TAG = UserCollection.class.getSimpleName();
 
     private static final String HAS_SET_DEFAULTDIRS
             = "org.tomahawk.tomahawk_android.has_set_defaultdirs";
 
-    private static final int MODE_ARTIST = 0;
+    private static final List<String> TYPE_WHITELIST = Arrays.asList("vfat", "exfat", "sdcardfs",
+            "fuse", "ntfs", "fat32", "ext3", "ext4", "esdfs");
 
-    private static final int MODE_ALBUM = 1;
+    private static final List<String> TYPE_BLACKLIST = Arrays.asList("tmpfs");
 
-    private static final int MODE_GENRE = 2;
+    private static final String[] MOUNT_WHITELIST = {"/mnt", "/Removable", "/storage"};
 
-    private final ArrayList<MediaWrapper> mItemList;
+    private static final String[] MOUNT_BLACKLIST = {"/mnt/secure", "/mnt/shell", "/mnt/asec",
+            "/mnt/obb", "/mnt/media_rw/extSdCard", "/mnt/media_rw/sdcard", "/storage/emulated"};
 
-    private final ReadWriteLock mItemListLock;
-
-    private boolean isStopping = false;
-
-    private boolean mRestart = false;
-
-    protected Thread mLoadingThread;
+    private static final String[] DEVICE_WHITELIST = {"/dev/block/vold", "/dev/fuse",
+            "/mnt/media_rw"};
 
     public final static HashSet<String> FOLDER_BLACKLIST;
 
     static {
-        final String[] folder_blacklist = {
-                "/alarms",
-                "/notifications",
-                "/ringtones",
-                "/media/alarms",
-                "/media/notifications",
-                "/media/ringtones",
-                "/media/audio/alarms",
-                "/media/audio/notifications",
-                "/media/audio/ringtones",
-                "/Android/data/"};
+        final String[] folder_blacklist = {"/alarms", "/notifications", "/ringtones",
+                "/media/alarms", "/media/notifications", "/media/ringtones", "/media/audio/alarms",
+                "/media/audio/notifications", "/media/audio/ringtones", "/Android/data/"};
 
         FOLDER_BLACKLIST = new HashSet<>();
         for (String item : folder_blacklist) {
@@ -110,208 +100,42 @@ public class UserCollection extends Collection {
         }
     }
 
-    public UserCollection() {
-        super(TomahawkApp.PLUGINNAME_USERCOLLECTION,
-                TomahawkApp.getContext().getString(R.string.local_collection_pretty_name), true);
+    private boolean mIsStopping = false;
 
-        mItemList = new ArrayList<>();
-        mItemListLock = new ReentrantReadWriteLock();
+    private boolean mRestart = false;
+
+    private Thread mLoadingThread;
+
+    private final ConcurrentHashMap<Query, Long> mQueryTimeStamps
+            = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<Artist, Long> mArtistTimeStamps
+            = new ConcurrentHashMap<>();
+
+    private final ConcurrentHashMap<Album, Long> mAlbumTimeStamps
+            = new ConcurrentHashMap<>();
+
+    public UserCollection() {
+        super(UserCollectionStubResolver.get());
+
+        initFuzzyIndex();
+    }
+
+    @Override
+    public Promise<String, Throwable, Void> getCollectionId() {
+        Deferred<String, Throwable, Void> d = new ADeferredObject<>();
+        return d.resolve(TomahawkApp.PLUGINNAME_USERCOLLECTION);
     }
 
     @Override
     public void loadIcon(ImageView imageView, boolean grayOut) {
-
-    }
-
-    /**
-     * @return A {@link java.util.List} of all {@link Track}s in this {@link Collection}
-     */
-    @Override
-    public ArrayList<Query> getQueries(boolean sorted) {
-        ArrayList<Query> queries = new ArrayList<>();
-        Resolver userCollectionResolver = PipeLine.getInstance().getResolver(
-                TomahawkApp.PLUGINNAME_USERCOLLECTION);
-        if (userCollectionResolver == null) {
-            return queries;
-        }
-        for (MediaWrapper media : getAudioItems()) {
-            Artist artist = Artist.get(media.getArtist());
-            Album album = Album.get(media.getAlbum(), artist);
-            if (!TextUtils.isEmpty(media.getArtworkURL())) {
-                album.setImage(Image.get(media.getArtworkURL(), false));
-            }
-            Track track = Track.get(media.getTitle(), album, artist);
-            track.setDuration(media.getLength());
-            track.setAlbumPos(media.getTrackNumber());
-            Query query = Query.get(media.getTitle(), media.getAlbum(), media.getArtist(), true);
-            Result result = Result.get(media.getLocation(), track, userCollectionResolver);
-            query.addTrackResult(result, 1f);
-            queries.add(query);
-            if (mAlbumAddedTimeStamps.get(query.getAlbum().getName()) == null
-                    || mAlbumAddedTimeStamps.get(query.getAlbum().getName()) < media
-                    .getLastModified()) {
-                mAlbumAddedTimeStamps.put(query.getAlbum().getName(), media.getLastModified());
-            }
-            if (mArtistAddedTimeStamps.get(query.getArtist().getName()) == null
-                    || mArtistAddedTimeStamps.get(query.getArtist().getName()) < media
-                    .getLastModified()) {
-                mArtistAddedTimeStamps.put(query.getArtist().getName(), media.getLastModified());
-            }
-            mTrackAddedTimeStamps.put(query, media.getLastModified());
-        }
-        if (sorted) {
-            Collections.sort(queries, new QueryComparator(QueryComparator.COMPARE_ALPHA));
-        }
-        return queries;
-    }
-
-    /**
-     * @return A {@link java.util.List} of all {@link org.tomahawk.libtomahawk.collection.Artist}s
-     * in this {@link org.tomahawk.libtomahawk.collection.Collection}
-     */
-    @Override
-    public ArrayList<Artist> getArtists(boolean sorted) {
-        HashMap<String, Artist> artistMap = new HashMap<>();
-        for (MediaWrapper media : getAudioItems()) {
-            if (media.getArtist() != null) {
-                if (!artistMap.containsKey(media.getArtist().toLowerCase())) {
-                    Artist artist = Artist.get(media.getArtist());
-                    artistMap.put(media.getArtist().toLowerCase(), artist);
-                }
-                if (mArtistAddedTimeStamps.get(media.getArtist().toLowerCase()) == null
-                        || mArtistAddedTimeStamps.get(media.getArtist().toLowerCase()) < media
-                        .getLastModified()) {
-                    mArtistAddedTimeStamps
-                            .put(media.getArtist().toLowerCase(), media.getLastModified());
-                }
-            }
-        }
-        ArrayList<Artist> artists = new ArrayList<>(artistMap.values());
-        if (sorted) {
-            Collections.sort(artists,
-                    new TomahawkListItemComparator(TomahawkListItemComparator.COMPARE_ALPHA));
-        }
-        return artists;
-    }
-
-    /**
-     * @return A {@link java.util.List} of all {@link org.tomahawk.libtomahawk.collection.Artist}s
-     * in this {@link org.tomahawk.libtomahawk.collection.Collection}
-     */
-    @Override
-    public ArrayList<Album> getAlbums(boolean sorted) {
-        HashMap<String, Album> albumMap = new HashMap<>();
-        for (MediaWrapper media : getAudioItems()) {
-            if (media.getAlbum() != null) {
-                if (!albumMap.containsKey(media.getAlbum().toLowerCase())) {
-                    Artist artist = Artist.get(media.getArtist());
-                    Album album = Album.get(media.getAlbum(), artist);
-                    if (!TextUtils.isEmpty(media.getArtworkURL())) {
-                        album.setImage(Image.get(media.getArtworkURL(), false));
-                    }
-                    albumMap.put(media.getAlbum().toLowerCase(), album);
-                }
-                if (mAlbumAddedTimeStamps.get(media.getAlbum().toLowerCase()) == null
-                        || mAlbumAddedTimeStamps.get(media.getAlbum().toLowerCase()) < media
-                        .getLastModified()) {
-                    mAlbumAddedTimeStamps
-                            .put(media.getAlbum().toLowerCase(), media.getLastModified());
-                }
-            }
-        }
-        ArrayList<Album> albums = new ArrayList<>(albumMap.values());
-        if (sorted) {
-            Collections.sort(albums,
-                    new TomahawkListItemComparator(TomahawkListItemComparator.COMPARE_ALPHA));
-        }
-        return albums;
-    }
-
-    /**
-     * @return A {@link java.util.List} of all {@link Album}s by the given Artist.
-     */
-    @Override
-    public ArrayList<Album> getArtistAlbums(Artist artist, boolean sorted) {
-        HashMap<String, Album> albumMap = new HashMap<>();
-        for (MediaWrapper media : getAudioItems(artist.getName(), null, MODE_ARTIST)) {
-            if (media.getAlbum() != null && !albumMap.containsKey(media.getAlbum().toLowerCase())) {
-                Album album = Album.get(media.getAlbum(), artist);
-                if (!TextUtils.isEmpty(media.getArtworkURL())) {
-                    album.setImage(Image.get(media.getArtworkURL(), false));
-                }
-                albumMap.put(media.getAlbum().toLowerCase(), album);
-            }
-        }
-        ArrayList<Album> albums = new ArrayList<>(albumMap.values());
-        if (sorted) {
-            Collections.sort(albums, new TomahawkListItemComparator(QueryComparator.COMPARE_ALPHA));
-        }
-        return albums;
-    }
-
-    /**
-     * @return A {@link java.util.List} of all {@link Track}s from the given Artist.
-     */
-    @Override
-    public ArrayList<Query> getArtistTracks(Artist artist, boolean sorted) {
-        ArrayList<Query> queries = new ArrayList<>();
-        Resolver userCollectionResolver = PipeLine.getInstance().getResolver(
-                TomahawkApp.PLUGINNAME_USERCOLLECTION);
-        if (userCollectionResolver == null) {
-            return queries;
-        }
-        for (MediaWrapper media : getAudioItems(artist.getName(), null, MODE_ARTIST)) {
-            Album album = Album.get(media.getAlbum(), artist);
-            if (!TextUtils.isEmpty(media.getArtworkURL())) {
-                album.setImage(Image.get(media.getArtworkURL(), false));
-            }
-            Track track = Track.get(media.getTitle(), album, artist);
-            track.setDuration(media.getLength());
-            track.setAlbumPos(media.getTrackNumber());
-            Query query = Query.get(media.getTitle(), media.getAlbum(), media.getArtist(), true);
-            Result result = Result.get(media.getLocation(), track, userCollectionResolver);
-            query.addTrackResult(result, 1f);
-            queries.add(query);
-        }
-        if (sorted) {
-            Collections
-                    .sort(queries, new TomahawkListItemComparator(QueryComparator.COMPARE_ALPHA));
-        }
-        return queries;
-    }
-
-    /**
-     * @return A {@link java.util.List} of all {@link Track}s from the given Album.
-     */
-    @Override
-    public ArrayList<Query> getAlbumTracks(Album album, boolean sorted) {
-        ArrayList<Query> queries = new ArrayList<>();
-        Resolver userCollectionResolver = PipeLine.getInstance().getResolver(
-                TomahawkApp.PLUGINNAME_USERCOLLECTION);
-        if (userCollectionResolver == null) {
-            return queries;
-        }
-        for (MediaWrapper media : getAudioItems(album.getName(), null, MODE_ALBUM)) {
-            Artist artist = Artist.get(media.getArtist());
-            Track track = Track.get(media.getTitle(), album, artist);
-            track.setDuration(media.getLength());
-            track.setAlbumPos(media.getTrackNumber());
-            Query query = Query.get(media.getTitle(), media.getAlbum(), media.getArtist(), true);
-            Result result = Result.get(media.getLocation(), track, userCollectionResolver);
-            query.addTrackResult(result, 1f);
-            queries.add(query);
-        }
-        if (sorted) {
-            Collections.sort(queries, new QueryComparator(QueryComparator.COMPARE_ALBUMPOS));
-        }
-        return queries;
     }
 
     public void loadMediaItems(boolean restart) {
         if (restart && isWorking()) {
-            /* do a clean restart if a scan is ongoing */
+            // do a clean restart if a scan is ongoing
             mRestart = true;
-            isStopping = true;
+            mIsStopping = true;
         } else {
             loadMediaItems();
         }
@@ -319,14 +143,14 @@ public class UserCollection extends Collection {
 
     public void loadMediaItems() {
         if (mLoadingThread == null || mLoadingThread.getState() == Thread.State.TERMINATED) {
-            isStopping = false;
+            mIsStopping = false;
             mLoadingThread = new Thread(new GetMediaItemsRunnable());
             mLoadingThread.start();
         }
     }
 
     public void stop() {
-        isStopping = true;
+        mIsStopping = true;
     }
 
     public boolean isWorking() {
@@ -336,144 +160,45 @@ public class UserCollection extends Collection {
                 mLoadingThread.getState() != Thread.State.NEW;
     }
 
-    public boolean hasAudioItems() {
-        mItemListLock.readLock().lock();
-        for (int i = 0; i < mItemList.size(); i++) {
-            MediaWrapper item = mItemList.get(i);
-            if (item.getType() == MediaWrapper.TYPE_AUDIO) {
-                mItemListLock.readLock().unlock();
-                return true;
-            }
-        }
-        mItemListLock.readLock().unlock();
-        return false;
-    }
-
-    public ArrayList<MediaWrapper> getAudioItems() {
-        ArrayList<MediaWrapper> audioItems = new ArrayList<>();
-        mItemListLock.readLock().lock();
-        for (int i = 0; i < mItemList.size(); i++) {
-            MediaWrapper item = mItemList.get(i);
-            if (item.getType() == MediaWrapper.TYPE_AUDIO) {
-                audioItems.add(item);
-            }
-        }
-        mItemListLock.readLock().unlock();
-        return audioItems;
-    }
-
-    public ArrayList<MediaWrapper> getAudioItems(String name, String name2, int mode) {
-        ArrayList<MediaWrapper> audioItems = new ArrayList<>();
-        mItemListLock.readLock().lock();
-        for (int i = 0; i < mItemList.size(); i++) {
-            MediaWrapper item = mItemList.get(i);
-            if (item.getType() == MediaWrapper.TYPE_AUDIO) {
-
-                boolean valid = false;
-                switch (mode) {
-                    case MODE_ARTIST:
-                        valid = name.equalsIgnoreCase(item.getArtist()) && (name2 == null || name2
-                                .equalsIgnoreCase(item.getAlbum()));
-                        break;
-                    case MODE_ALBUM:
-                        valid = name.equalsIgnoreCase(item.getAlbum());
-                        break;
-                    case MODE_GENRE:
-                        valid = name.equalsIgnoreCase(item.getGenre()) && (name2 == null || name2
-                                .equals(item.getAlbum()));
-                        break;
-                    default:
-                        break;
-                }
-                if (valid) {
-                    audioItems.add(item);
-                }
-
-            }
-        }
-        mItemListLock.readLock().unlock();
-        return audioItems;
-    }
-
-    public ArrayList<MediaWrapper> getMediaItems() {
-        return mItemList;
-    }
-
-    public MediaWrapper getMediaItem(String location) {
-        mItemListLock.readLock().lock();
-        for (int i = 0; i < mItemList.size(); i++) {
-            MediaWrapper item = mItemList.get(i);
-            if (item.getLocation().equals(location)) {
-                mItemListLock.readLock().unlock();
-                return item;
-            }
-        }
-        mItemListLock.readLock().unlock();
-        return null;
-    }
-
-    public ArrayList<MediaWrapper> getMediaItems(List<String> pathList) {
-        ArrayList<MediaWrapper> items = new ArrayList<>();
-        for (int i = 0; i < pathList.size(); i++) {
-            MediaWrapper item = getMediaItem(pathList.get(i));
-            items.add(item);
-        }
-        return items;
-    }
-
     private class GetMediaItemsRunnable implements Runnable {
-
-        private final Stack<File> directories = new Stack<>();
-
-        private final HashSet<String> directoriesScanned = new HashSet<>();
-
-        public GetMediaItemsRunnable() {
-        }
 
         @Override
         public void run() {
-            SharedPreferences preferences = PreferenceManager
-                    .getDefaultSharedPreferences(TomahawkApp.getContext());
-            Set<String> setDefaultDirs =
-                    preferences.getStringSet(HAS_SET_DEFAULTDIRS, null);
+            SharedPreferences preferences =
+                    PreferenceManager.getDefaultSharedPreferences(TomahawkApp.getContext());
+            Set<String> setDefaultDirs = preferences.getStringSet(HAS_SET_DEFAULTDIRS, null);
             if (setDefaultDirs == null) {
                 setDefaultDirs = new HashSet<>();
             }
             for (String defaultDir : getStorageDirectories()) {
                 if (!setDefaultDirs.contains(defaultDir)) {
-                    DatabaseHelper.getInstance().addMediaDir(defaultDir);
+                    DatabaseHelper.get().addMediaDir(defaultDir);
                     setDefaultDirs.add(defaultDir);
                 }
             }
             preferences.edit().putStringSet(HAS_SET_DEFAULTDIRS, setDefaultDirs).commit();
 
-            List<File> mediaDirs = DatabaseHelper.getInstance().getMediaDirs(false);
+            List<File> mediaDirs = DatabaseHelper.get().getMediaDirs(false);
+            Stack<File> directories = new Stack<>();
             directories.addAll(mediaDirs);
 
             // get all existing media items
-            HashMap<String, MediaWrapper> existingMedias = DatabaseHelper.getInstance()
-                    .getMedias();
+            HashMap<String, MediaWrapper> existingMedias = DatabaseHelper.get().getMedias();
 
             // list of all added files
             HashSet<String> addedLocations = new HashSet<>();
 
-            // clear all old items
-            mItemListLock.writeLock().lock();
-            mItemList.clear();
-            mItemListLock.writeLock().unlock();
-
-            MediaItemFilter mediaFileFilter = new MediaItemFilter();
-
             ArrayList<File> mediaToScan = new ArrayList<>();
             try {
+                final HashSet<String> directoriesScanned = new HashSet<>();
                 // Count total files, and stack them
                 while (!directories.isEmpty()) {
                     File dir = directories.pop();
                     String dirPath = dir.getAbsolutePath();
 
                     // Skip some system folders
-                    if (dirPath.startsWith("/proc/") || dirPath.startsWith("/sys/") || dirPath
-                            .startsWith("/dev/")) {
+                    if (dirPath.startsWith("/proc/") || dirPath.startsWith("/sys/")
+                            || dirPath.startsWith("/dev/")) {
                         continue;
                     }
 
@@ -481,7 +206,8 @@ public class UserCollection extends Collection {
                     try {
                         dirPath = dir.getCanonicalPath();
                     } catch (IOException e) {
-                        e.printStackTrace();
+                        Log.e(TAG, "GetMediaItemsRunnable#run() - " + e.getClass() + ": "
+                                + e.getLocalizedMessage());
                     }
                     if (directoriesScanned.contains(dirPath)) {
                         continue;
@@ -496,8 +222,8 @@ public class UserCollection extends Collection {
 
                     // Filter the extensions and the folders
                     try {
-                        File[] f;
-                        if ((f = dir.listFiles(mediaFileFilter)) != null) {
+                        File[] f = dir.listFiles(new MediaItemFilter());
+                        if (f != null) {
                             for (File file : f) {
                                 if (file.isFile()) {
                                     mediaToScan.add(file);
@@ -508,64 +234,60 @@ public class UserCollection extends Collection {
                         }
                     } catch (Exception e) {
                         // listFiles can fail in OutOfMemoryError, go to the next folder
+                        Log.e(TAG, "GetMediaItemsRunnable#run() - " + e.getClass() + ": "
+                                + e.getLocalizedMessage());
                         continue;
                     }
 
-                    if (isStopping) {
+                    if (mIsStopping) {
                         Log.d(TAG, "Stopping scan");
                         return;
                     }
                 }
-
+                ArrayList<MediaWrapper> mediaWrappers = new ArrayList<>();
                 // Process the stacked items
                 for (File file : mediaToScan) {
                     String fileURI = LibVLC.PathToURI(file.getPath());
                     if (existingMedias.containsKey(fileURI)) {
-                        /**
-                         * only add file if it is not already in the list. eg. if
-                         * user select an subfolder as well
-                         */
+                        // only add file if it is not already in the list. eg. if a user selects a
+                        // subfolder as well
                         if (!addedLocations.contains(fileURI)) {
-                            mItemListLock.writeLock().lock();
                             // get existing media item from database
-                            mItemList.add(existingMedias.get(fileURI));
-                            mItemListLock.writeLock().unlock();
+                            mediaWrappers.add(existingMedias.get(fileURI));
                             addedLocations.add(fileURI);
                         }
                     } else {
-                        mItemListLock.writeLock().lock();
                         // create new media item
                         final Media media = new Media(
-                                VLCMediaPlayer.getInstance().getLibVlcInstance(), fileURI);
+                                VLCMediaPlayer.get().getLibVlcInstance(), fileURI);
                         media.parse();
                         media.release();
-                        /* skip files with .mod extension and no duration */
-                        if ((media.getDuration() == 0 || (media.getTrackCount() != 0 && TextUtils
-                                .isEmpty(media.getTrack(0).codec))) &&
-                                fileURI.endsWith(".mod")) {
-                            mItemListLock.writeLock().unlock();
+                        // skip files with .mod extension and no duration
+                        if ((media.getDuration() == 0 || (media.getTrackCount() != 0
+                                && TextUtils.isEmpty(media.getTrack(0).codec)))
+                                && fileURI.endsWith(".mod")) {
                             continue;
                         }
                         MediaWrapper mw = new MediaWrapper(media);
                         mw.setLastModified(file.lastModified());
-                        mItemList.add(mw);
+                        mediaWrappers.add(mw);
                         // Add this item to database
-                        DatabaseHelper.getInstance().addMedia(mw);
-                        mItemListLock.writeLock().unlock();
+                        DatabaseHelper.get().addMedia(mw);
                     }
-                    if (isStopping) {
+                    if (mIsStopping) {
                         Log.d(TAG, "Stopping scan");
                         return;
                     }
                 }
+                processMediaWrappers(mediaWrappers);
             } finally {
                 // remove old files & folders from database if storage is mounted
-                if (!isStopping && Environment.getExternalStorageState()
+                if (!mIsStopping && Environment.getExternalStorageState()
                         .equals(Environment.MEDIA_MOUNTED)) {
                     for (String fileURI : addedLocations) {
                         existingMedias.remove(fileURI);
                     }
-                    DatabaseHelper.getInstance().removeMedias(existingMedias.keySet());
+                    DatabaseHelper.get().removeMedias(existingMedias.keySet());
                 }
 
                 if (mRestart) {
@@ -576,6 +298,58 @@ public class UserCollection extends Collection {
                 EventBus.getDefault().post(new CollectionManager.UpdatedEvent());
             }
         }
+
+        private void processMediaWrappers(List<MediaWrapper> mws) {
+            Map<String, Set<String>> albumArtistsMap = new HashMap<>();
+            Map<String, Album> albumMap = new HashMap<>();
+            for (MediaWrapper mw : mws) {
+                if (mw.getType() == MediaWrapper.TYPE_AUDIO) {
+                    String albumKey = mw.getAlbum() != null ? mw.getAlbum().toLowerCase() : "";
+                    if (albumArtistsMap.get(albumKey) == null) {
+                        albumArtistsMap.put(albumKey, new HashSet<String>());
+                    }
+                    albumArtistsMap.get(albumKey).add(mw.getArtist());
+                    int artistCount = albumArtistsMap.get(albumKey).size();
+                    if (artistCount == 1) {
+                        Artist artist = Artist.get(mw.getArtist());
+                        albumMap.put(albumKey, Album.get(mw.getAlbum(), artist));
+                    } else if (artistCount == 2) {
+                        albumMap.put(albumKey, Album.get(mw.getAlbum(), Artist.COMPILATION_ARTIST));
+                    }
+                }
+            }
+            List<ScriptResolverTrack> tracks = new ArrayList<>();
+            for (MediaWrapper mw : mws) {
+                if (mw.getType() == MediaWrapper.TYPE_AUDIO) {
+                    ScriptResolverTrack track = new ScriptResolverTrack();
+                    track.album = mw.getAlbum();
+                    track.albumArtist = mw.getAlbumArtist();
+                    track.track = mw.getTitle();
+                    track.artist = mw.getArtist();
+                    track.duration = mw.getLength() / 1000;
+                    track.albumPos = mw.getTrackNumber();
+                    track.url = mw.getLocation();
+                    track.imagePath = mw.getArtworkURL();
+                    track.lastModified = mw.getLastModified();
+                    tracks.add(track);
+                }
+            }
+            CollectionDb db = CollectionDbManager.get().getCollectionDb(getId());
+            db.wipe();
+            db.addTracks(tracks.toArray(new ScriptResolverTrack[tracks.size()]));
+        }
+    }
+
+    public ConcurrentHashMap<Query, Long> getQueryTimeStamps() {
+        return mQueryTimeStamps;
+    }
+
+    public ConcurrentHashMap<Artist, Long> getArtistTimeStamps() {
+        return mArtistTimeStamps;
+    }
+
+    public ConcurrentHashMap<Album, Long> getAlbumTimeStamps() {
+        return mAlbumTimeStamps;
     }
 
     private final RestartHandler mRestartHandler = new RestartHandler(this);
@@ -603,8 +377,8 @@ public class UserCollection extends Collection {
         public boolean accept(File f) {
             boolean accepted = false;
             if (!f.isHidden()) {
-                if (f.isDirectory() && !FOLDER_BLACKLIST
-                        .contains(f.getPath().toLowerCase(Locale.ENGLISH))) {
+                if (f.isDirectory()
+                        && !FOLDER_BLACKLIST.contains(f.getPath().toLowerCase(Locale.ENGLISH))) {
                     accepted = true;
                 } else {
                     String fileName = f.getName().toLowerCase(Locale.ENGLISH);
@@ -626,24 +400,6 @@ public class UserCollection extends Collection {
         ArrayList<String> list = new ArrayList<>();
         list.add(Environment.getExternalStorageDirectory().getPath());
 
-        List<String> typeWL =
-                Arrays.asList("vfat", "exfat", "sdcardfs", "fuse", "ntfs", "fat32", "ext3", "ext4",
-                        "esdfs");
-        List<String> typeBL = Arrays.asList("tmpfs");
-        String[] mountWL = {"/mnt", "/Removable", "/storage"};
-        String[] mountBL = {
-                "/mnt/secure",
-                "/mnt/shell",
-                "/mnt/asec",
-                "/mnt/obb",
-                "/mnt/media_rw/extSdCard",
-                "/mnt/media_rw/sdcard",
-                "/storage/emulated"};
-        String[] deviceWL = {
-                "/dev/block/vold",
-                "/dev/fuse",
-                "/mnt/media_rw"};
-
         try {
             bufReader = new BufferedReader(new FileReader("/proc/mounts"));
             String line;
@@ -655,14 +411,14 @@ public class UserCollection extends Collection {
                 String type = tokens.nextToken();
 
                 // skip if already in list or if type/mountpoint is blacklisted
-                if (list.contains(mountpoint) || typeBL.contains(type)
-                        || doStringsStartWith(mountBL, mountpoint)) {
+                if (list.contains(mountpoint) || TYPE_BLACKLIST.contains(type)
+                        || doStringsStartWith(MOUNT_BLACKLIST, mountpoint)) {
                     continue;
                 }
 
                 // check that device is in whitelist, and either type or mountpoint is in a whitelist
-                if (doStringsStartWith(deviceWL, device) && (typeWL.contains(type)
-                        || doStringsStartWith(mountWL, mountpoint))) {
+                if (doStringsStartWith(DEVICE_WHITELIST, device) && (TYPE_WHITELIST.contains(type)
+                        || doStringsStartWith(MOUNT_WHITELIST, mountpoint))) {
                     list.add(mountpoint);
                 }
             }

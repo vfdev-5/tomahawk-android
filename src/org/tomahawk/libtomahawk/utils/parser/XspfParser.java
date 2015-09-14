@@ -17,21 +17,21 @@
  */
 package org.tomahawk.libtomahawk.utils.parser;
 
-import com.google.common.base.Charsets;
-import com.google.common.io.Files;
+import com.squareup.okhttp.Response;
 
+import org.apache.commons.io.FileUtils;
 import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.libtomahawk.utils.GsonXmlHelper;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.NetworkUtils;
+import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 
 import android.net.Uri;
 import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 
 public class XspfParser {
@@ -49,7 +49,7 @@ public class XspfParser {
     public static Playlist parse(File file) {
         String xspfString = null;
         try {
-            xspfString = Files.toString(file, Charsets.UTF_8);
+            xspfString = FileUtils.readFileToString(file, Charset.forName("UTF-8"));
         } catch (IOException e) {
             Log.e(TAG, "parse: " + e.getClass() + ": " + e.getLocalizedMessage());
         }
@@ -58,14 +58,11 @@ public class XspfParser {
 
     public static Playlist parse(String url) {
         String xspfString = null;
-        TomahawkUtils.HttpResponse response = null;
         try {
-            response = TomahawkUtils.httpRequest(null, url, null, null, null, null);
-        } catch (IOException | NoSuchAlgorithmException | KeyManagementException e) {
+            Response response = NetworkUtils.httpRequest(null, url, null, null, null, null, true);
+            xspfString = response.body().string();
+        } catch (IOException e) {
             Log.e(TAG, "parse: " + e.getClass() + ": " + e.getLocalizedMessage());
-        }
-        if (response != null) {
-            xspfString = response.mResponseText;
         }
         return parseXspf(xspfString);
     }
@@ -80,7 +77,8 @@ public class XspfParser {
                     qs.add(Query.get(track.title, track.album, track.creator, false));
                 }
                 String title = xspfPlaylist.title == null ? "XSPF Playlist" : xspfPlaylist.title;
-                Playlist pl = Playlist.fromQueryList(title, qs);
+                Playlist pl = Playlist.fromQueryList(
+                        TomahawkMainActivity.getLifetimeUniqueStringId(), title, null, qs);
                 pl.setFilled(true);
                 return pl;
             }

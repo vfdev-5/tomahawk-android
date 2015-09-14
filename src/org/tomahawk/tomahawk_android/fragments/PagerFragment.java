@@ -23,8 +23,6 @@ import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 import org.tomahawk.tomahawk_android.adapters.TomahawkPagerAdapter;
 import org.tomahawk.tomahawk_android.utils.FragmentInfo;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
-import org.tomahawk.tomahawk_android.views.FancyDropDown;
 import org.tomahawk.tomahawk_android.views.PageIndicator;
 import org.tomahawk.tomahawk_android.views.Selector;
 
@@ -201,32 +199,18 @@ public abstract class PagerFragment extends ContentHeaderFragment implements
     }
 
     protected void setupPager(List<FragmentInfoList> fragmentInfoLists, int initialPage,
-            String selectorPosStorageKey) {
-        if (getView()==null){
+            String selectorPosStorageKey, int offscreenPageLimit) {
+        if (getView() == null) {
             return;
         }
 
-        List<FragmentInfo> currentFragmentInfos = new ArrayList<>();
-        for (FragmentInfoList list : fragmentInfoLists) {
-            currentFragmentInfos.add(list.getCurrentFragmentInfo());
-        }
-        TomahawkPagerAdapter pagerAdapter = new TomahawkPagerAdapter(getChildFragmentManager(),
-                currentFragmentInfos, ((Object) this).getClass(), mContainerFragmentId);
-        mViewPager = (ViewPager) getView().findViewById(R.id.fragmentpager);
-        mViewPager.setOnPageChangeListener(this);
-        if (initialPage < 0) {
-            initialPage = mViewPager.getCurrentItem();
-        }
-        mViewPager.setAdapter(pagerAdapter);
+        fillAdapter(fragmentInfoLists, initialPage, offscreenPageLimit);
 
         mPageIndicator = (PageIndicator) getView().findViewById(R.id.page_indicator);
         mPageIndicator.setVisibility(View.VISIBLE);
         mPageIndicator.setup(mViewPager, fragmentInfoLists,
                 getActivity().findViewById(R.id.sliding_layout),
                 (Selector) getView().findViewById(R.id.selector), selectorPosStorageKey);
-        if (initialPage >= 0) {
-            mViewPager.setCurrentItem(initialPage);
-        }
         if (((TomahawkMainActivity) getActivity()).getSlidingUpPanelLayout().isPanelHidden()) {
             onSlidingLayoutHidden();
         } else {
@@ -234,14 +218,33 @@ public abstract class PagerFragment extends ContentHeaderFragment implements
         }
     }
 
-    protected abstract void onInfoSystemResultsReported(InfoRequestData infoRequestData);
+    protected void fillAdapter(List<FragmentInfoList> fragmentInfoLists, int initialPage,
+            int offscreenPageLimit) {
+        if (getView() == null) {
+            return;
+        }
 
-    protected void showFancyDropDown(TomahawkListItem item, int initialSelection,
-            List<FancyDropDown.DropDownItemInfo> dropDownItemInfos,
-            FancyDropDown.DropDownListener dropDownListener) {
-        super.showFancyDropDown(initialSelection, item.getName().toUpperCase(), dropDownItemInfos,
-                dropDownListener);
+        List<FragmentInfo> currentFragmentInfos = new ArrayList<>();
+        for (FragmentInfoList list : fragmentInfoLists) {
+            currentFragmentInfos.add(list.getCurrentFragmentInfo());
+        }
+        mViewPager = (ViewPager) getView().findViewById(R.id.fragmentpager);
+        mViewPager.setOnPageChangeListener(this);
+        mViewPager.setOffscreenPageLimit(offscreenPageLimit);
+        if (initialPage >= 0) {
+            mViewPager.setCurrentItem(initialPage);
+        }
+        if (mViewPager.getAdapter() == null) {
+            TomahawkPagerAdapter pagerAdapter = new TomahawkPagerAdapter(getChildFragmentManager(),
+                    currentFragmentInfos, ((Object) this).getClass(), mContainerFragmentId);
+            mViewPager.setAdapter(pagerAdapter);
+        } else {
+            TomahawkPagerAdapter pagerAdapter = (TomahawkPagerAdapter) mViewPager.getAdapter();
+            pagerAdapter.changeFragments(currentFragmentInfos);
+        }
     }
+
+    protected abstract void onInfoSystemResultsReported(InfoRequestData infoRequestData);
 
     protected void showContentHeader(Object item) {
         super.showContentHeader(item);

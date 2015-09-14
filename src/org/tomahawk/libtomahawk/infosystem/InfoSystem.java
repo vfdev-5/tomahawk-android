@@ -24,8 +24,6 @@ import org.tomahawk.libtomahawk.collection.Artist;
 import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.database.DatabaseHelper;
 import org.tomahawk.libtomahawk.infosystem.hatchet.HatchetInfoPlugin;
-import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetNowPlaying;
-import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetNowPlayingPostStruct;
 import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetPlaybackLogEntry;
 import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetPlaybackLogPostStruct;
 import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetPlaylistEntries;
@@ -35,13 +33,10 @@ import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetPlaylistPostStr
 import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetPlaylistRequest;
 import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetRelationshipPostStruct;
 import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetRelationshipStruct;
-import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetSocialAction;
-import org.tomahawk.libtomahawk.infosystem.hatchet.models.HatchetSocialActionPostStruct;
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.libtomahawk.utils.GsonHelper;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
 
 import android.text.TextUtils;
 import android.util.Log;
@@ -106,7 +101,7 @@ public class InfoSystem {
         mInfoPlugins.add(new HatchetInfoPlugin());
     }
 
-    public static InfoSystem getInstance() {
+    public static InfoSystem get() {
         return Holder.instance;
     }
 
@@ -141,15 +136,14 @@ public class InfoSystem {
         if (artist != null) {
             QueryParams params = new QueryParams();
             params.name = artist.getName();
-            String requestId = resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ARTISTS, params,
-                    artist);
-            requestIds.add(requestId);
             if (full) {
-                requestId = resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ARTISTS_TOPHITS, params,
-                        artist);
+                String requestId = resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ARTISTS_TOPHITS,
+                        params);
                 requestIds.add(requestId);
-                requestId = resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ARTISTS_ALBUMS, params,
-                        artist);
+                requestId = resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ARTISTS_ALBUMS, params);
+                requestIds.add(requestId);
+            } else {
+                String requestId = resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ARTISTS, params);
                 requestIds.add(requestId);
             }
         }
@@ -167,7 +161,7 @@ public class InfoSystem {
             QueryParams params = new QueryParams();
             params.name = album.getName();
             params.artistname = album.getArtist().getName();
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ALBUMS, params, album);
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_ALBUMS_TRACKS, params);
         }
         return null;
     }
@@ -179,11 +173,11 @@ public class InfoSystem {
      * @return the created InfoRequestData's requestId
      */
     public String resolve(User user) {
-        if (user != null) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
             params.ids = new ArrayList<>();
             params.ids.add(user.getId());
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS, params, user);
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS, params);
         }
         return null;
     }
@@ -206,7 +200,7 @@ public class InfoSystem {
             QueryParams params = new QueryParams();
             params.playlist_local_id = playlist.getId();
             params.playlist_id = playlist.getHatchetId();
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS, params, playlist);
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS_PLAYLISTENTRIES, params);
         }
         return null;
     }
@@ -229,17 +223,17 @@ public class InfoSystem {
     /**
      * Fill up the given user with metadata fetched from all added InfoPlugins
      *
-     * @param user the User to enrich with data from the InfoPlugins
+     * @param user       the User for which to get the socialActions
+     * @param beforeDate the Date that specifies which socialActions to fetch
      * @return the created InfoRequestData's requestId
      */
-    public String resolveSocialActions(User user, int pageNumber) {
-        if (user != null) {
+    public String resolveSocialActions(User user, Date beforeDate) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
             params.userid = user.getId();
-            params.offset = String.valueOf(pageNumber * HatchetInfoPlugin.SOCIALACTIONS_LIMIT);
+            params.before_date = beforeDate;
             params.limit = String.valueOf(HatchetInfoPlugin.SOCIALACTIONS_LIMIT);
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_SOCIALACTIONS,
-                    params, user);
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_SOCIALACTIONS, params);
         }
         return null;
     }
@@ -247,17 +241,18 @@ public class InfoSystem {
     /**
      * Fill up the given user with metadata fetched from all added InfoPlugins
      *
-     * @param user the User to enrich with data from the InfoPlugins
+     * @param user       the User to enrich with data from the InfoPlugins
+     * @param beforeDate the Date that specifies which socialActions to fetch
      * @return the created InfoRequestData's requestId
      */
-    public String resolveFriendsFeed(User user, int pageNumber) {
-        if (user != null) {
+    public String resolveFriendsFeed(User user, Date beforeDate) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
             params.userid = user.getId();
-            params.offset = String.valueOf(pageNumber * HatchetInfoPlugin.FRIENDSFEED_LIMIT);
+            params.type = HatchetInfoPlugin.HATCHET_SOCIALACTION_PARAMTYPE_FRIENDSFEED;
+            params.before_date = beforeDate;
             params.limit = String.valueOf(HatchetInfoPlugin.FRIENDSFEED_LIMIT);
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_FRIENDSFEED,
-                    params, user);
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_SOCIALACTIONS, params);
         }
         return null;
     }
@@ -269,11 +264,11 @@ public class InfoSystem {
      * @return the created InfoRequestData's requestId
      */
     public String resolvePlaybackLog(User user) {
-        if (user != null) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
-            params.userid = user.getId();
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_PLAYBACKLOG,
-                    params, user);
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_PLAYBACKLOG, params);
         }
         return null;
     }
@@ -284,12 +279,12 @@ public class InfoSystem {
      * @param user the User to enrich with data from the InfoPlugins
      * @return the created InfoRequestData's requestId
      */
-    public String resolveFavorites(User user) {
-        if (user != null) {
+    public String resolveLovedItems(User user) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
-            params.userid = user.getId();
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_LOVEDITEMS, params, user,
-                    true);
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_LOVEDITEMS, params, true);
         }
         return null;
     }
@@ -301,12 +296,11 @@ public class InfoSystem {
      * @return the created InfoRequestData's requestId
      */
     public String resolveFollowings(User user) {
-        if (user != null) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
-            params.userid = user.getId();
-            params.type = HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TYPE_FOLLOW;
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS_USERS_FOLLOWINGS,
-                    params, user);
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_FOLLOWS, params);
         }
         return null;
     }
@@ -318,61 +312,55 @@ public class InfoSystem {
      * @return the created InfoRequestData's requestId
      */
     public String resolveFollowers(User user) {
-        if (user != null) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
-            params.targetuserid = user.getId();
-            params.type = HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TYPE_FOLLOW;
-            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS_USERS_FOLLOWERS,
-                    params, user);
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_FOLLOWERS, params);
         }
         return null;
     }
 
     /**
-     * Fetch the given user's list of starred albums
+     * Fetch the given user's list of loved albums
      *
      * @return the created InfoRequestData's requestId
      */
-    public String resolveStarredAlbums(User user) {
-        QueryParams params = new QueryParams();
-        if (user != null) {
-            params.userid = user.getId();
+    public String resolveLovedAlbums(User user) {
+        if (user != null && !user.isOffline()) {
+            QueryParams params = new QueryParams();
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_LOVEDALBUMS, params, true);
         }
-        params.type = HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TYPE_LOVE;
-        params.targettype = HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TARGETTYPE_ALBUM;
-        return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS_USERS_STARREDALBUMS,
-                params, user, true);
+        return null;
     }
 
     /**
-     * Fetch the given user's list of starred artists
+     * Fetch the given user's list of loved artists
      *
      * @return the created InfoRequestData's requestId
      */
-    public String resolveStarredArtists(User user) {
-        QueryParams params = new QueryParams();
-        if (user != null) {
-            params.userid = user.getId();
+    public String resolveLovedArtists(User user) {
+        if (user != null && !user.isOffline()) {
+            QueryParams params = new QueryParams();
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
+            return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_USERS_LOVEDARTISTS, params, true);
         }
-        params.type = HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TYPE_LOVE;
-        params.targettype = HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TARGETTYPE_ARTIST;
-        return resolve(InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS_USERS_STARREDARTISTS,
-                params, user, true);
-    }
-
-    public String resolvePlaylists(User user) {
-        return resolvePlaylists(user, false);
+        return null;
     }
 
     public String resolvePlaylists(User user, boolean isBackgroundRequest) {
-        if (user != null) {
+        if (user != null && !user.isOffline()) {
             QueryParams params = new QueryParams();
-            params.userid = user.getId();
+            params.ids = new ArrayList<>();
+            params.ids.add(user.getId());
             String requestId = TomahawkMainActivity.getSessionUniqueStringId();
             InfoRequestData infoRequestData = new InfoRequestData(requestId,
                     InfoRequestData.INFOREQUESTDATA_TYPE_USERS_PLAYLISTS, params,
                     isBackgroundRequest);
-            resolve(infoRequestData, user);
+            resolve(infoRequestData);
             return infoRequestData.getRequestId();
         }
         return null;
@@ -407,43 +395,6 @@ public class InfoSystem {
     }
 
     /**
-     * Build an InfoRequestData object with the given data and order results
-     *
-     * @param type           the type of the InfoRequestData object
-     * @param params         all parameters to be given to the InfoPlugin
-     * @param itemToBeFilled the item to automatically be filled after the InfoPlugin fetched the
-     *                       results from its source
-     * @return the created InfoRequestData's requestId
-     */
-    public String resolve(int type, QueryParams params, TomahawkListItem itemToBeFilled) {
-        return resolve(type, params, itemToBeFilled, false);
-    }
-
-    /**
-     * Build an InfoRequestData object with the given data and order results
-     *
-     * @param type                the type of the InfoRequestData object
-     * @param params              all parameters to be given to the InfoPlugin
-     * @param itemToBeFilled      the item to automatically be filled after the InfoPlugin fetched
-     *                            the results from its source
-     * @param isBackgroundRequest boolean indicating whether or not this request should be run with
-     *                            the lowest priority (useful for sync operations)
-     * @return the created InfoRequestData's requestId
-     */
-    public String resolve(int type, QueryParams params, TomahawkListItem itemToBeFilled,
-            boolean isBackgroundRequest) {
-        String requestId = TomahawkMainActivity.getSessionUniqueStringId();
-        InfoRequestData infoRequestData = new InfoRequestData(requestId, type, params,
-                isBackgroundRequest);
-        if (itemToBeFilled != null) {
-            resolve(infoRequestData, itemToBeFilled);
-        } else {
-            resolve(infoRequestData);
-        }
-        return infoRequestData.getRequestId();
-    }
-
-    /**
      * Order results for the given InfoRequestData object
      *
      * @param infoRequestData the InfoRequestData object to fetch results for
@@ -454,20 +405,6 @@ public class InfoSystem {
         }
     }
 
-    /**
-     * Order results for the given InfoRequestData object
-     *
-     * @param infoRequestData the InfoRequestData object to fetch results for
-     * @param itemToBeFilled  the item to automatically be filled after the InfoPlugin fetched the
-     *                        results from its source
-     */
-    public void resolve(InfoRequestData infoRequestData,
-            TomahawkListItem itemToBeFilled) {
-        for (InfoPlugin infoPlugin : mInfoPlugins) {
-            infoPlugin.resolve(infoRequestData, itemToBeFilled);
-        }
-    }
-
     public void sendPlaybackEntryPostStruct(AuthenticatorUtils authenticatorUtils) {
         if (mNowPlaying != null && mNowPlaying != mLastPlaybackLogEntry) {
             mLastPlaybackLogEntry = mNowPlaying;
@@ -475,7 +412,13 @@ public class InfoSystem {
             HatchetPlaybackLogEntry playbackLogEntry = new HatchetPlaybackLogEntry();
             playbackLogEntry.albumString = mLastPlaybackLogEntry.getAlbum().getName();
             playbackLogEntry.artistString = mLastPlaybackLogEntry.getArtist().getName();
+            if (playbackLogEntry.artistString.isEmpty()) {
+                playbackLogEntry.artistString = "Unknown Artist";
+            }
             playbackLogEntry.trackString = mLastPlaybackLogEntry.getName();
+            if (playbackLogEntry.trackString.isEmpty()) {
+                playbackLogEntry.trackString = "Unknown Title";
+            }
             playbackLogEntry.timestamp = new Date(timeStamp);
             HatchetPlaybackLogPostStruct playbackLogPostStruct = new HatchetPlaybackLogPostStruct();
             playbackLogPostStruct.playbackLogEntry = playbackLogEntry;
@@ -485,7 +428,7 @@ public class InfoSystem {
             InfoRequestData infoRequestData = new InfoRequestData(requestId,
                     InfoRequestData.INFOREQUESTDATA_TYPE_PLAYBACKLOGENTRIES, null,
                     InfoRequestData.HTTPTYPE_POST, jsonString);
-            DatabaseHelper.getInstance().addOpToInfoSystemOpLog(infoRequestData,
+            DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
                     (int) (timeStamp / 1000));
             sendLoggedOps(authenticatorUtils);
         }
@@ -495,61 +438,29 @@ public class InfoSystem {
         if (mNowPlaying != query) {
             sendPlaybackEntryPostStruct(authenticatorUtils);
             mNowPlaying = query;
-            HatchetNowPlaying nowPlaying = new HatchetNowPlaying();
-            nowPlaying.album = query.getAlbum().getName();
-            nowPlaying.artist = query.getArtist().getName();
-            nowPlaying.track = query.getName();
-            HatchetNowPlayingPostStruct nowPlayingPostStruct = new HatchetNowPlayingPostStruct();
-            nowPlayingPostStruct.nowPlaying = nowPlaying;
+            long timeStamp = System.currentTimeMillis();
+            HatchetPlaybackLogEntry playbackLogEntry = new HatchetPlaybackLogEntry();
+            playbackLogEntry.albumString = query.getAlbum().getName();
+            playbackLogEntry.artistString = query.getArtist().getName();
+            if (playbackLogEntry.artistString.isEmpty()) {
+                playbackLogEntry.artistString = "Unknown Artist";
+            }
+            playbackLogEntry.trackString = query.getName();
+            if (playbackLogEntry.trackString.isEmpty()) {
+                playbackLogEntry.trackString = "Unknown Title";
+            }
+            playbackLogEntry.type = "nowplaying";
+            playbackLogEntry.timestamp = new Date(timeStamp);
+            HatchetPlaybackLogPostStruct playbackLogPostStruct = new HatchetPlaybackLogPostStruct();
+            playbackLogPostStruct.playbackLogEntry = playbackLogEntry;
 
             String requestId = TomahawkMainActivity.getSessionUniqueStringId();
-            String jsonString = GsonHelper.get().toJson(nowPlayingPostStruct);
+            String jsonString = GsonHelper.get().toJson(playbackLogPostStruct);
             InfoRequestData infoRequestData = new InfoRequestData(requestId,
-                    InfoRequestData.INFOREQUESTDATA_TYPE_PLAYBACKLOGENTRIES_NOWPLAYING, null,
+                    InfoRequestData.INFOREQUESTDATA_TYPE_PLAYBACKLOGENTRIES, null,
                     InfoRequestData.HTTPTYPE_POST, jsonString);
             send(infoRequestData, authenticatorUtils);
         }
-    }
-
-    private void sendSocialActionPostStruct(AuthenticatorUtils authenticatorUtils,
-            String trackString, String artistString, String albumString, String type,
-            boolean action) {
-        long timeStamp = System.currentTimeMillis();
-        HatchetSocialAction socialAction = new HatchetSocialAction();
-        socialAction.type = type;
-        socialAction.action = String.valueOf(action);
-        socialAction.trackString = trackString;
-        socialAction.artistString = artistString;
-        socialAction.albumString = albumString;
-        socialAction.timestamp = new Date(timeStamp);
-        HatchetSocialActionPostStruct socialActionPostStruct = new HatchetSocialActionPostStruct();
-        socialActionPostStruct.socialAction = socialAction;
-
-        String requestId = TomahawkMainActivity.getSessionUniqueStringId();
-        String jsonString = GsonHelper.get().toJson(socialActionPostStruct);
-        InfoRequestData infoRequestData = new InfoRequestData(requestId,
-                InfoRequestData.INFOREQUESTDATA_TYPE_SOCIALACTIONS, null,
-                InfoRequestData.HTTPTYPE_POST, jsonString);
-        DatabaseHelper.getInstance().addOpToInfoSystemOpLog(infoRequestData,
-                (int) (timeStamp / 1000));
-        sendLoggedOps(authenticatorUtils);
-    }
-
-    public void sendSocialActionPostStruct(AuthenticatorUtils authenticatorUtils, Query query,
-            String type, boolean action) {
-        sendSocialActionPostStruct(authenticatorUtils, query.getName(), query.getArtist().getName(),
-                null, type, action);
-    }
-
-    public void sendSocialActionPostStruct(AuthenticatorUtils authenticatorUtils, Artist artist,
-            String type, boolean action) {
-        sendSocialActionPostStruct(authenticatorUtils, null, artist.getName(), null, type, action);
-    }
-
-    public void sendSocialActionPostStruct(AuthenticatorUtils authenticatorUtils, Album album,
-            String type, boolean action) {
-        sendSocialActionPostStruct(authenticatorUtils, null, album.getArtist().getName(),
-                album.getName(), type, action);
     }
 
     public List<String> sendPlaylistPostStruct(AuthenticatorUtils authenticatorUtils,
@@ -567,7 +478,7 @@ public class InfoSystem {
         InfoRequestData infoRequestData = new InfoRequestData(requestId,
                 InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS, params,
                 InfoRequestData.HTTPTYPE_POST, jsonString);
-        DatabaseHelper.getInstance().addOpToInfoSystemOpLog(infoRequestData,
+        DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
                 (int) (timeStamp / 1000));
         return sendLoggedOps(authenticatorUtils);
     }
@@ -589,7 +500,7 @@ public class InfoSystem {
         InfoRequestData infoRequestData = new InfoRequestData(requestId,
                 InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS_PLAYLISTENTRIES, params,
                 InfoRequestData.HTTPTYPE_POST, jsonString);
-        DatabaseHelper.getInstance().addOpToInfoSystemOpLog(infoRequestData,
+        DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
                 (int) (timeStamp / 1000));
         sendLoggedOps(authenticatorUtils);
     }
@@ -602,31 +513,52 @@ public class InfoSystem {
         InfoRequestData infoRequestData = new InfoRequestData(requestId,
                 InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS, params,
                 InfoRequestData.HTTPTYPE_DELETE, null);
-        DatabaseHelper.getInstance().addOpToInfoSystemOpLog(infoRequestData,
+        DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
                 (int) (timeStamp / 1000));
         sendLoggedOps(authenticatorUtils);
     }
 
-    public void deletePlaylistEntry(AuthenticatorUtils authenticatorUtils, String localPlaylistId,
-            String entryId) {
+    public void deletePlaylistEntry(AuthenticatorUtils authenticatorUtils, String entryId) {
         long timeStamp = System.currentTimeMillis();
         String requestId = TomahawkMainActivity.getLifetimeUniqueStringId();
         QueryParams params = new QueryParams();
-        params.playlist_local_id = localPlaylistId;
         params.entry_id = entryId;
         InfoRequestData infoRequestData = new InfoRequestData(requestId,
                 InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS_PLAYLISTENTRIES, params,
                 InfoRequestData.HTTPTYPE_DELETE, null);
-        DatabaseHelper.getInstance().addOpToInfoSystemOpLog(infoRequestData,
+        DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
                 (int) (timeStamp / 1000));
         sendLoggedOps(authenticatorUtils);
     }
 
+    public String sendRelationshipPostStruct(AuthenticatorUtils authenticatorUtils, User user) {
+        return sendRelationshipPostStruct(authenticatorUtils, user.getId(), null, null, null);
+    }
+
+    public String sendRelationshipPostStruct(AuthenticatorUtils authenticatorUtils, Query query) {
+        return sendRelationshipPostStruct(authenticatorUtils, null, query.getName(),
+                query.getArtist().getName(), null);
+    }
+
+    public String sendRelationshipPostStruct(AuthenticatorUtils authenticatorUtils, Artist artist) {
+        return sendRelationshipPostStruct(authenticatorUtils, null, null, artist.getName(), null);
+    }
+
+    public String sendRelationshipPostStruct(AuthenticatorUtils authenticatorUtils, Album album) {
+        return sendRelationshipPostStruct(authenticatorUtils, null, null,
+                album.getArtist().getName(), album.getName());
+    }
+
     public String sendRelationshipPostStruct(AuthenticatorUtils authenticatorUtils,
-            User targetUser) {
+            String user, String track, String artist, String album) {
+        long timeStamp = System.currentTimeMillis();
         HatchetRelationshipStruct relationship = new HatchetRelationshipStruct();
-        relationship.targetUser = targetUser.getId();
-        relationship.type = "follow";
+        relationship.targetUser = user;
+        relationship.targetTrackString = track;
+        relationship.targetArtistString = artist;
+        relationship.targetAlbumString = album;
+        relationship.type = user != null ? HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TYPE_FOLLOW
+                : HatchetInfoPlugin.HATCHET_RELATIONSHIPS_TYPE_LOVE;
         HatchetRelationshipPostStruct struct = new HatchetRelationshipPostStruct();
         struct.relationShip = relationship;
 
@@ -636,18 +568,23 @@ public class InfoSystem {
         InfoRequestData infoRequestData = new InfoRequestData(requestId,
                 InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS, null,
                 InfoRequestData.HTTPTYPE_POST, jsonString);
-        send(infoRequestData, authenticatorUtils);
+        DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
+                (int) (timeStamp / 1000));
+        sendLoggedOps(authenticatorUtils);
         return infoRequestData.getRequestId();
     }
 
     public String deleteRelationship(AuthenticatorUtils authenticatorUtils, String relationshipId) {
+        long timeStamp = System.currentTimeMillis();
         String requestId = TomahawkMainActivity.getSessionUniqueStringId();
         QueryParams params = new QueryParams();
         params.relationship_id = relationshipId;
         InfoRequestData infoRequestData = new InfoRequestData(requestId,
                 InfoRequestData.INFOREQUESTDATA_TYPE_RELATIONSHIPS, params,
                 InfoRequestData.HTTPTYPE_DELETE, null);
-        send(infoRequestData, authenticatorUtils);
+        DatabaseHelper.get().addOpToInfoSystemOpLog(infoRequestData,
+                (int) (timeStamp / 1000));
+        sendLoggedOps(authenticatorUtils);
         return infoRequestData.getRequestId();
     }
 
@@ -686,7 +623,7 @@ public class InfoSystem {
 
     public synchronized List<String> sendLoggedOps(AuthenticatorUtils authenticatorUtils) {
         List<String> requestIds = new ArrayList<>();
-        List<InfoRequestData> loggedOps = DatabaseHelper.getInstance().getLoggedOps();
+        List<InfoRequestData> loggedOps = DatabaseHelper.get().getLoggedOps();
         for (InfoRequestData loggedOp : loggedOps) {
             if (!mLoggedOpsMap.containsKey(loggedOp.getLoggedOpId())) {
                 mLoggedOpsMap.put(loggedOp.getLoggedOpId(), loggedOp);
@@ -708,7 +645,7 @@ public class InfoSystem {
         return requestIds;
     }
 
-    public synchronized void onLoggedOpsSent(ArrayList<String> doneRequestsIds, boolean success) {
+    public synchronized void onLoggedOpsSent(ArrayList<String> doneRequestsIds, boolean discard) {
         List<InfoRequestData> loggedOps = new ArrayList<>();
         HashSet<Integer> requestTypes = new HashSet<>();
         HashSet<String> playlistIds = new HashSet<>();
@@ -721,25 +658,28 @@ public class InfoSystem {
                         == InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS_PLAYLISTENTRIES) {
                     playlistIds.add(loggedOp.getQueryParams().playlist_local_id);
                 } else if (loggedOp.getType() == InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS) {
-                    HatchetPlaylistEntries entries =
-                            loggedOp.getResult(HatchetPlaylistEntries.class);
-                    if (entries != null && entries.playlists.size() > 0) {
-                        playlistIds.add(entries.playlists.get(0).id);
-                        DatabaseHelper.getInstance().updatePlaylistHatchetId(
-                                loggedOp.getQueryParams().playlist_local_id,
-                                entries.playlists.get(0).id);
+                    List<HatchetPlaylistEntries> results =
+                            loggedOp.getResultList(HatchetPlaylistEntries.class);
+                    if (results != null && results.size() > 0) {
+                        HatchetPlaylistEntries entries = results.get(0);
+                        if (entries != null && entries.playlists.size() > 0) {
+                            playlistIds.add(entries.playlists.get(0).id);
+                            DatabaseHelper.get().updatePlaylistHatchetId(
+                                    loggedOp.getQueryParams().playlist_local_id,
+                                    entries.playlists.get(0).id);
+                        }
                     }
                 }
                 mLoggedOpsMap.remove(loggedOp.getLoggedOpId());
             }
         }
-        if (success) {
+        if (discard) {
             for (InfoRequestData loggedOp : loggedOps) {
                 mPlaylistsLoggedOpsMap.remove(loggedOp.getLoggedOpId());
             }
             trySendingQueuedOps();
-            DatabaseHelper.getInstance().removeOpsFromInfoSystemOpLog(loggedOps);
-            if (DatabaseHelper.getInstance().getLoggedOpsCount() == 0) {
+            DatabaseHelper.get().removeOpsFromInfoSystemOpLog(loggedOps);
+            if (DatabaseHelper.get().getLoggedOpsCount() == 0) {
                 if (!requestTypes.isEmpty()) {
                     OpLogIsEmptiedEvent event = new OpLogIsEmptiedEvent();
                     event.mRequestTypes = requestTypes;
@@ -755,11 +695,22 @@ public class InfoSystem {
             while (!mQueuedLoggedOps.isEmpty()) {
                 InfoRequestData queuedLoggedOp = mQueuedLoggedOps.remove(0);
                 QueryParams params = queuedLoggedOp.getQueryParams();
-                String hatchetId = DatabaseHelper.getInstance()
+                String hatchetId = DatabaseHelper.get()
                         .getPlaylistHatchetId(params.playlist_local_id);
                 if (hatchetId != null) {
-                    params.playlist_id = hatchetId;
-                    send(queuedLoggedOp, AuthenticatorManager.getInstance().getAuthenticatorUtils(
+                    if (queuedLoggedOp.getType()
+                            == InfoRequestData.INFOREQUESTDATA_TYPE_PLAYLISTS_PLAYLISTENTRIES) {
+                        // Now that we know the hatchetId, we can add it to the playlistEntry object
+                        // we POST to Hatchet
+                        HatchetPlaylistEntryPostStruct struct = GsonHelper.get()
+                                .fromJson(queuedLoggedOp.getJsonStringToSend(),
+                                        HatchetPlaylistEntryPostStruct.class);
+                        struct.playlistEntry.playlist = Integer.valueOf(hatchetId);
+                        queuedLoggedOp.setJsonStringToSend(GsonHelper.get().toJson(struct));
+                    } else {
+                        params.playlist_id = hatchetId;
+                    }
+                    send(queuedLoggedOp, AuthenticatorManager.get().getAuthenticatorUtils(
                             TomahawkApp.PLUGINNAME_HATCHET));
                 } else {
                     Log.e(TAG, "Hatchet sync - Couldn't send queued logged op, because the stored "
@@ -774,6 +725,6 @@ public class InfoSystem {
         mSentRequests.put(loggedOp.getRequestId(), loggedOp);
         ArrayList<String> doneRequestsIds = new ArrayList<>();
         doneRequestsIds.add(loggedOp.getRequestId());
-        InfoSystem.getInstance().onLoggedOpsSent(doneRequestsIds, true);
+        InfoSystem.get().onLoggedOpsSent(doneRequestsIds, true);
     }
 }

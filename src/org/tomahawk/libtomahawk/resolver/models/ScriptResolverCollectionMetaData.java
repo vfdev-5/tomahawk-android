@@ -19,6 +19,8 @@ package org.tomahawk.libtomahawk.resolver.models;
 
 public class ScriptResolverCollectionMetaData {
 
+    public String id;
+
     public String prettyname;
 
     public String description;
@@ -26,6 +28,8 @@ public class ScriptResolverCollectionMetaData {
     public String iconfile;
 
     public int trackcount;
+
+    public int[] capabilities;
 
     public ScriptResolverCollectionMetaData() {
     }

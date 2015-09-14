@@ -17,6 +17,10 @@
  */
 package org.tomahawk.tomahawk_android.fragments;
 
+import org.tomahawk.libtomahawk.collection.Collection;
+import org.tomahawk.libtomahawk.collection.CollectionManager;
+import org.tomahawk.libtomahawk.collection.DbCollection;
+import org.tomahawk.libtomahawk.collection.UserCollection;
 import org.tomahawk.libtomahawk.infosystem.InfoRequestData;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.utils.FragmentInfo;
@@ -37,7 +41,22 @@ public class CollectionPagerFragment extends PagerFragment {
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        getActivity().setTitle(getString(R.string.drawer_title_collection).toUpperCase());
+        if (getArguments().containsKey(TomahawkFragment.COLLECTION_ID)) {
+            String collectionId = getArguments().getString(TomahawkFragment.COLLECTION_ID);
+            Collection collection = CollectionManager.get().getCollection(collectionId);
+            if (collection == null) {
+                getActivity().getSupportFragmentManager().popBackStack();
+                return;
+            }
+            getActivity().setTitle(collection.getName());
+            if (collection instanceof UserCollection) {
+                showContentHeader(R.drawable.collection_header);
+            } else if (collection instanceof DbCollection) {
+                showContentHeader(((DbCollection) collection).getIconBackgroundPath());
+            }
+        } else {
+            throw new RuntimeException("No collection-id provided to CollectionPagerFragment");
+        }
 
         int initialPage = -1;
         if (getArguments() != null) {
@@ -45,8 +64,6 @@ public class CollectionPagerFragment extends PagerFragment {
                 initialPage = getArguments().getInt(TomahawkFragment.CONTAINER_FRAGMENT_PAGE);
             }
         }
-
-        showContentHeader(R.drawable.collection_header);
 
         List<FragmentInfoList> fragmentInfoLists = new ArrayList<>();
         FragmentInfoList fragmentInfoList = new FragmentInfoList();
@@ -67,13 +84,13 @@ public class CollectionPagerFragment extends PagerFragment {
 
         fragmentInfoList = new FragmentInfoList();
         fragmentInfo = new FragmentInfo();
-        fragmentInfo.mClass = TracksFragment.class;
+        fragmentInfo.mClass = PlaylistEntriesFragment.class;
         fragmentInfo.mTitle = getString(R.string.tracks);
         fragmentInfo.mBundle = getChildFragmentBundle();
         fragmentInfoList.addFragmentInfo(fragmentInfo);
         fragmentInfoLists.add(fragmentInfoList);
 
-        setupPager(fragmentInfoLists, initialPage, null);
+        setupPager(fragmentInfoLists, initialPage, null, 2);
     }
 
     @Override

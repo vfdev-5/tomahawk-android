@@ -17,7 +17,8 @@
  */
 package org.tomahawk.tomahawk_android.adapters;
 
-import org.tomahawk.tomahawk_android.R;
+import org.tomahawk.libtomahawk.collection.CollectionCursor;
+import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 
 import android.content.res.Resources;
@@ -28,7 +29,7 @@ import java.util.List;
 
 public class Segment {
 
-    private boolean mShowAsGrid;
+    private int mColumnCount = 1;
 
     private int mHorizontalPadding;
 
@@ -42,11 +43,13 @@ public class Segment {
 
     private final List<String> mHeaderStrings = new ArrayList<>();
 
-    private List<Object> mListItems = new ArrayList<>();
+    private List mListItems = new ArrayList<>();
 
-    private final List<List<Object>> mGridItems = new ArrayList<>();
+    private CollectionCursor mCollectionCursor;
 
-    private int mSegmentSize = 0;
+    private Playlist mPlaylist;
+
+    private int mOffset;
 
     private boolean mShowAsQueued;
 
@@ -60,96 +63,75 @@ public class Segment {
 
     private int mLeftExtraPadding;
 
-    public Segment(List<Object> listItems, int headerLayoutId) {
-        this(listItems);
-        mHeaderLayoutId = headerLayoutId;
-    }
+    public static class Builder {
 
-    public Segment(List<Object> listItems) {
-        mListItems = listItems;
-        mSegmentSize = mListItems.size();
-    }
+        private Segment mSegment;
 
-    public Segment(int headerStringResId, List<Object> listItems) {
-        this(TomahawkApp.getContext().getString(headerStringResId), listItems);
-    }
-
-    public Segment(String headerString, List<Object> listItems) {
-        this(listItems);
-        mHeaderStrings.add(headerString);
-        mHeaderLayoutId = R.layout.single_line_list_header;
-    }
-
-    public Segment(String headerString, List<Object> listItems, int headerLayoutId) {
-        this(listItems);
-        mHeaderStrings.add(headerString);
-        mHeaderLayoutId = headerLayoutId;
-    }
-
-    public Segment(int initialPos, List<Integer> headerStringResIds,
-            AdapterView.OnItemSelectedListener spinnerClickListener,
-            List<Object> listItems) {
-        this(listItems);
-        mInitialPos = initialPos;
-        for (Integer resId : headerStringResIds) {
-            mHeaderStrings.add(TomahawkApp.getContext().getString(resId));
+        public Builder(CollectionCursor collectionCursor) {
+            mSegment = new Segment();
+            mSegment.mCollectionCursor = collectionCursor;
         }
-        mHeaderLayoutId = R.layout.dropdown_header;
-        mSpinnerClickListener = spinnerClickListener;
-    }
 
-    public Segment(List<Object> listItems, int columnCountResId,
-            int horizontalPaddingResId, int verticalPaddingResId, int headerLayoutId) {
-        this(listItems, columnCountResId, horizontalPaddingResId, verticalPaddingResId);
-        mHeaderLayoutId = headerLayoutId;
-    }
+        public Builder(List listItems) {
+            mSegment = new Segment();
+            mSegment.mListItems = listItems;
+        }
 
+        public Builder(Playlist playlist) {
+            mSegment = new Segment();
+            mSegment.mPlaylist = playlist;
+        }
 
-    public Segment(List<Object> listItems, int columnCountResId,
-            int horizontalPaddingResId, int verticalPaddingResId) {
-        mShowAsGrid = true;
-        Resources resources = TomahawkApp.getContext().getResources();
-        mHorizontalPadding = resources.getDimensionPixelSize(horizontalPaddingResId);
-        mVerticalPadding = resources.getDimensionPixelSize(verticalPaddingResId);
-        int columnCount = resources.getInteger(columnCountResId);
-        for (int i = 0; i < listItems.size(); i += columnCount) {
-            List<Object> row = new ArrayList<>();
-            for (int j = 0; j < columnCount; j++) {
-                if (i + j < listItems.size()) {
-                    row.add(listItems.get(i + j));
-                } else {
-                    row.add(null);
-                }
+        public Builder headerLayout(int headerLayoutId) {
+            mSegment.mHeaderLayoutId = headerLayoutId;
+            return this;
+        }
+
+        public Builder headerString(int headerStringResId) {
+            mSegment.mHeaderStrings.add(TomahawkApp.getContext().getString(headerStringResId));
+            return this;
+        }
+
+        public Builder headerString(String headerString) {
+            mSegment.mHeaderStrings.add(headerString);
+            return this;
+        }
+
+        public Builder headerStrings(List<Integer> headerStringResIds) {
+            for (Integer resId : headerStringResIds) {
+                mSegment.mHeaderStrings.add(TomahawkApp.getContext().getString(resId));
             }
-            mGridItems.add(row);
+            return this;
         }
-        mSegmentSize += listItems.size();
-    }
 
-    public Segment(int headerStringResId, List<Object> listItems, int columnCountResId,
-            int horizontalPaddingResId, int verticalPaddingResId) {
-        this(TomahawkApp.getContext().getString(headerStringResId), listItems, columnCountResId,
-                horizontalPaddingResId, verticalPaddingResId);
-    }
-
-    public Segment(String headerString, List<Object> listItems, int columnCountResId,
-            int horizontalPaddingResId, int verticalPaddingResId) {
-        this(listItems, columnCountResId, horizontalPaddingResId, verticalPaddingResId);
-        mHeaderStrings.add(headerString);
-        mHeaderLayoutId = R.layout.single_line_list_header;
-    }
-
-    public Segment(int initialPos, List<Integer> headerStringResIds,
-            AdapterView.OnItemSelectedListener spinnerClickListener,
-            List<Object> listItems, int columnCountResId, int horizontalPaddingResId,
-            int verticalPaddingResId) {
-        this(listItems, columnCountResId, horizontalPaddingResId, verticalPaddingResId);
-        mInitialPos = initialPos;
-        for (Integer resId : headerStringResIds) {
-            mHeaderStrings.add(TomahawkApp.getContext().getString(resId));
+        public Builder spinner(AdapterView.OnItemSelectedListener spinnerClickListener,
+                int initialPos) {
+            mSegment.mSpinnerClickListener = spinnerClickListener;
+            mSegment.mInitialPos = initialPos;
+            return this;
         }
-        mHeaderLayoutId = R.layout.dropdown_header;
-        mSpinnerClickListener = spinnerClickListener;
+
+        public Builder showAsGrid(int columnCountResId, int horizontalPaddingResId,
+                int verticalPaddingResId) {
+            Resources resources = TomahawkApp.getContext().getResources();
+            mSegment.mColumnCount = resources.getInteger(columnCountResId);
+            mSegment.mHorizontalPadding = resources.getDimensionPixelSize(horizontalPaddingResId);
+            mSegment.mVerticalPadding = resources.getDimensionPixelSize(verticalPaddingResId);
+            return this;
+        }
+
+        public Builder offset(int offset) {
+            mSegment.mOffset = offset;
+            return this;
+        }
+
+        public Segment build() {
+            return mSegment;
+        }
+
+    }
+
+    private Segment() {
     }
 
     public int getInitialPos() {
@@ -175,20 +157,62 @@ public class Segment {
         return mSpinnerClickListener;
     }
 
-    public int size() {
-        return mShowAsGrid ? mGridItems.size() : mListItems.size();
+    public int getCount() {
+        if (mCollectionCursor != null) {
+            return mCollectionCursor.size() - mOffset;
+        } else if (mPlaylist != null) {
+            return mPlaylist.size() - mOffset;
+        } else {
+            return mListItems.size() - mOffset;
+        }
     }
 
-    public int segmentSize() {
-        return mSegmentSize;
+    public int getRowCount() {
+        return (int) Math.ceil((float) getCount() / mColumnCount);
     }
 
     public Object get(int location) {
-        return mShowAsGrid ? mGridItems.get(location) : mListItems.get(location);
+        location = location + mOffset;
+        if (mColumnCount > 1) {
+            List<Object> list = new ArrayList<>();
+            for (int i = location * mColumnCount; i < location * mColumnCount + mColumnCount; i++) {
+                Object item = null;
+                if (mCollectionCursor != null && i < mCollectionCursor.size()) {
+                    item = mCollectionCursor.get(i);
+                } else if (mPlaylist != null) {
+                    item = mPlaylist.getEntryAtPos(i);
+                } else if (i < mListItems.size()) {
+                    item = mListItems.get(i);
+                }
+                list.add(item);
+            }
+            return list;
+        } else {
+            Object item;
+            if (mCollectionCursor != null) {
+                item = mCollectionCursor.get(location);
+            } else if (mPlaylist != null) {
+                item = mPlaylist.getEntryAtPos(location);
+            } else {
+                item = mListItems.get(location);
+            }
+            return item;
+        }
     }
 
     public Object getFirstSegmentItem() {
-        return mShowAsGrid ? mGridItems.get(0).get(0) : mListItems.get(0);
+        Object result = get(0);
+        if (result instanceof List) {
+            return ((List) get(0)).get(0);
+        } else {
+            return result;
+        }
+    }
+
+    public void close() {
+        if (mCollectionCursor != null) {
+            mCollectionCursor.close();
+        }
     }
 
     public int getHorizontalPadding() {

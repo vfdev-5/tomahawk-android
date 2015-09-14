@@ -18,14 +18,11 @@
 package org.tomahawk.libtomahawk.infosystem;
 
 import org.tomahawk.libtomahawk.authentication.AuthenticatorUtils;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
 
 public interface InfoPlugin {
 
     void send(InfoRequestData infoRequestData, AuthenticatorUtils authenticatorUtils);
 
     void resolve(InfoRequestData infoRequestData);
-
-    void resolve(InfoRequestData infoRequestData, TomahawkListItem itemToBeFilled);
 
 }

@@ -21,11 +21,9 @@ import org.tomahawk.libtomahawk.infosystem.InfoSystem;
 import org.tomahawk.libtomahawk.infosystem.User;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 import org.tomahawk.tomahawk_android.adapters.Segment;
-import org.tomahawk.tomahawk_android.adapters.TomahawkListAdapter;
 import org.tomahawk.tomahawk_android.utils.FragmentUtils;
 
 import android.os.Bundle;
-import android.view.LayoutInflater;
 import android.view.View;
 
 import java.util.ArrayList;
@@ -45,20 +43,15 @@ public class UsersFragment extends TomahawkFragment {
     public void onResume() {
         super.onResume();
 
-        if (getArguments() != null) {
-            if (getArguments().containsKey(SHOW_MODE)) {
-                mShowMode = getArguments().getInt(SHOW_MODE);
-                if (mShowMode == SHOW_MODE_TYPE_FOLLOWERS) {
-                    String requestId = InfoSystem.getInstance().resolveFollowers(mUser);
-                    if (requestId != null) {
-                        mCorrespondingRequestIds.add(requestId);
-                    }
-                } else {
-                    String requestId = InfoSystem.getInstance().resolveFollowings(mUser);
-                    if (requestId != null) {
-                        mCorrespondingRequestIds.add(requestId);
-                    }
-                }
+        if (mShowMode == SHOW_MODE_TYPE_FOLLOWERS) {
+            String requestId = InfoSystem.get().resolveFollowers(mUser);
+            if (requestId != null) {
+                mCorrespondingRequestIds.add(requestId);
+            }
+        } else {
+            String requestId = InfoSystem.get().resolveFollowings(mUser);
+            if (requestId != null) {
+                mCorrespondingRequestIds.add(requestId);
             }
         }
         if (mContainerFragmentClass == null) {
@@ -97,9 +90,6 @@ public class UsersFragment extends TomahawkFragment {
             return;
         }
 
-        TomahawkMainActivity activity = (TomahawkMainActivity) getActivity();
-        LayoutInflater layoutInflater = getActivity().getLayoutInflater();
-
         List users = new ArrayList();
         if (mShowMode == SHOW_MODE_TYPE_FOLLOWERS) {
             if (mUser.getFollowers() != null) {
@@ -110,15 +100,6 @@ public class UsersFragment extends TomahawkFragment {
         } else if (mUser.getFollowings() != null) {
             users.addAll(mUser.getFollowings().keySet());
         }
-        Segment segment = new Segment(users);
-        if (getListAdapter() == null) {
-            TomahawkListAdapter tomahawkListAdapter = new TomahawkListAdapter(activity,
-                    layoutInflater, segment, getListView(), this);
-            setListAdapter(tomahawkListAdapter);
-        } else {
-            getListAdapter().setSegments(segment, getListView());
-        }
-
-        onUpdateAdapterFinished();
+        fillAdapter(new Segment.Builder(users).build());
     }
 }

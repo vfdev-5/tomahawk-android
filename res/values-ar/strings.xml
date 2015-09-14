@@ -193,6 +193,7 @@
   <string name="music">الموسيقى</string>
   <string name="biography">السّيرة الذّاتيّة</string>
   <!--"Similar" in the sense of "similar artists" or "similar songs" on an artist/track page.-->
+  <string name="similar">المشابهة</string>
   <!--Shown as a title for a list of songs in the search results view.-->
   <string name="songs">الأغاني</string>
   <!--Shown as part of a count string. E.g.: "3 Songs", "1 Song"-->
@@ -213,11 +214,13 @@
   <string name="followers_count">المتابِعين: %1$d، المتابَعين: %2$d</string>
   <string name="resolver_config_redirect_button_text_log_into">لِج إلى</string>
   <string name="resolver_config_redirect_button_text_log_out_of">اخرج من</string>
+  <string name="ask_access_activity_header">أتريد حفظ بيانات كلّ المقطوعات التي تشغّلها في Hatchet آليًّا؟</string>
   <string name="ask_access_activity_text1">سنفعل ذلك لك! فضلًا مكّن خدمتنا في إعدادات النّظام.</string>
   <string name="button_close">أغلق</string>
   <string name="view_album">اعرض الألبوم</string>
   <string name="connect">الاتّصال</string>
   <string name="connect_headertext">اختر الخدمات الّتي تريد استخدامها. يعمل توماهوك أفضل عندما تكون خدمات أكثر مفعّلة.</string>
+  <string name="connect_header_manualresolvers">مثبّت يدويًّا</string>
   <string name="advanced">متقدّم</string>
   <string name="info">معلومات</string>
   <string name="playbackpanel_seek_coachmark">يمكنك السّعي في مقطوعة بالضّغط الطّويل على زرّ التّشغيل.</string>
@@ -228,6 +231,7 @@
   <string name="welcome_fragment_explanation_title">البدء</string>
   <string name="welcome_fragment_explanation_heading">الموسيقى في كلّ مكان.\nليس عليك أن تكون كذلك الآن.</string>
   <string name="welcome_fragment_explanation_text">توقّف عن ملاحقة الموسيقى في الوِبّ وفي الخدمات الّتي لا تستخدمها، أو المصادر الّتي لا تملك نفاذًا إليها. أعطي اسم أو وصلة إلى أغنية، أو ألبوم أو قائمة تشغيل، وسيعثر توماهوك على أفضل مصدر متوفّر ويشغّله.</string>
+  <string name="welcome_fragment_hatchet_text">يمكنك بِـ Hatchet أخيرًا امتلاك تجميعة موسيقى في مكان واحد، أو مشاركة قوائم التّشغيل أو المقطوعات المفضّلة، أو ببساطة مزامنة التّطبيق بتاماهوك على سطح المكتب. </string>
   <string name="welcome_fragment_setup_title">اتّصل</string>
   <string name="welcome_fragment_done_title">تمّ!</string>
   <string name="welcome_fragment_done_heading">تمّ كلّ شيء!</string>
@@ -240,4 +244,12 @@
     <item quantity="many">اختر قائمة تشغيل لإضافة %1$d مقطوعةً إليها:</item>
     <item quantity="other">اختر قائمة تشغيل لإضافة %1$d مقطوعة إليها:</item>
   </plurals>
+  <string name="seeking_not_supported">آسفون، لا يدعم هذا الحلّال السّعي.</string>
+  <string name="install_plugin_title">تثبيت الملحقات</string>
+  <string name="install_plugin_warning">ستثبّت ملحقة توماهوك من مصدر مجهول. يمكن أن ستسبّب هذا بخطر أمنيّ.</string>
+  <string name="install_plugin_warning2">أتريد حقًّا تثبيت هذه الملحقة؟</string>
+  <string name="uninstall_plugin_title">إزالة تثبيت الملحقات</string>
+  <string name="uninstall_plugin_warning">أتريد حقًّا إزالة تثبيت هذه الملحقة؟</string>
+  <string name="gmusic_info_text">اختر حسابًا:</string>
+  <string name="invalid_file">تعذّر فتح الملفّ.</string>
 </resources>

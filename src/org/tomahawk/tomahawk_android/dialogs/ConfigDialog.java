@@ -19,7 +19,9 @@ package org.tomahawk.tomahawk_android.dialogs;
 
 import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
 import org.tomahawk.libtomahawk.resolver.Resolver;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.resolver.ScriptResolver;
+import org.tomahawk.libtomahawk.utils.ImageUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.ui.widgets.BoundedLinearLayout;
@@ -64,6 +66,8 @@ public abstract class ConfigDialog extends DialogFragment {
     private ImageView mConnectImageView;
 
     private ImageView mConnectBgImageView;
+
+    private ImageView mRemoveButton;
 
     protected SmoothProgressBar mProgressBar;
 
@@ -131,6 +135,8 @@ public abstract class ConfigDialog extends DialogFragment {
                 .findViewById(R.id.config_dialog_connect_bg_imageview);
         mProgressBar = (SmoothProgressBar) mDialogView
                 .findViewById(R.id.smoothprogressbar);
+        mRemoveButton = (ImageView) mDialogView
+                .findViewById(R.id.config_dialog_remove_button);
 
         mPositiveButton.setText(getString(R.string.ok).toUpperCase());
         mNegativeButton.setText(getString(R.string.cancel).toUpperCase());
@@ -184,6 +190,9 @@ public abstract class ConfigDialog extends DialogFragment {
 
     protected abstract void onNegativeAction();
 
+    protected void onRemoveAction() {
+    }
+
     protected void hideNegativeButton() {
         mNegativeButton.setVisibility(View.GONE);
     }
@@ -194,6 +203,17 @@ public abstract class ConfigDialog extends DialogFragment {
 
     protected void hideConnectImage() {
         mConnectImageView.setVisibility(View.GONE);
+    }
+
+    protected void showRemoveButton() {
+        ImageUtils.setTint(mRemoveButton.getDrawable(), R.color.tomahawk_red);
+        mRemoveButton.setVisibility(View.VISIBLE);
+        mRemoveButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                onRemoveAction();
+            }
+        });
     }
 
     protected void setConnectImageViewClickable() {
@@ -208,10 +228,20 @@ public abstract class ConfigDialog extends DialogFragment {
 
     protected void setStatus(Resolver resolver) {
         mResolverEnabled = resolver.isEnabled();
-        resolver.loadIconWhite(mStatusImageView);
-        resolver.loadIconBackground(mHeaderBackground, false);
+        if (!(resolver instanceof ScriptResolver) ||
+                ((ScriptResolver) resolver).getScriptAccount().getMetaData()
+                        .manifest.iconBackground != null) {
+            resolver.loadIconBackground(mHeaderBackground, false);
+        }
+        if (!(resolver instanceof ScriptResolver) ||
+                ((ScriptResolver) resolver).getScriptAccount().getMetaData()
+                        .manifest.iconWhite != null) {
+            resolver.loadIconWhite(mStatusImageView);
+        } else {
+            resolver.loadIcon(mStatusImageView, false);
+        }
         int resId = resolver.isEnabled() ? R.drawable.ic_connected : R.drawable.ic_connect;
-        TomahawkUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), mConnectImageView, resId);
+        ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), mConnectImageView, resId);
         int bgResId = resolver.isEnabled() ? R.drawable.selectable_background_button_green
                 : R.drawable.selectable_background_button_white;
         mConnectBgImageView.setImageResource(bgResId);
@@ -254,7 +284,7 @@ public abstract class ConfigDialog extends DialogFragment {
     private void updateContainerHeight() {
         final int panelHeight = getResources().getDimensionPixelSize(R.dimen.row_height_verylarge);
 
-        TomahawkUtils.afterViewGlobalLayout(new TomahawkUtils.ViewRunnable(getDialogView()) {
+        ViewUtils.afterViewGlobalLayout(new ViewUtils.ViewRunnable(getDialogView()) {
             @Override
             public void run() {
                 setContainerHeight(getDialogView().getHeight() - panelHeight * 2);
@@ -263,7 +293,7 @@ public abstract class ConfigDialog extends DialogFragment {
     }
 
     private void setContainerHeight(final int height) {
-        TomahawkUtils.afterViewGlobalLayout(new TomahawkUtils.ViewRunnable(getDialogView()) {
+        ViewUtils.afterViewGlobalLayout(new ViewUtils.ViewRunnable(getDialogView()) {
             @Override
             public void run() {
                 mDialogFrame.setMaxHeight(height);

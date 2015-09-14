@@ -18,12 +18,16 @@
 package org.tomahawk.libtomahawk.resolver;
 
 import org.tomahawk.libtomahawk.collection.Album;
+import org.tomahawk.libtomahawk.collection.AlphaComparable;
 import org.tomahawk.libtomahawk.collection.Artist;
+import org.tomahawk.libtomahawk.collection.ArtistAlphaComparable;
+import org.tomahawk.libtomahawk.collection.Cacheable;
 import org.tomahawk.libtomahawk.collection.Image;
+import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.collection.Track;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.LevensteinDistance;
+import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 import org.tomahawk.tomahawk_android.mediaplayers.TomahawkMediaPlayer;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
 
 import android.text.TextUtils;
 
@@ -37,20 +41,15 @@ import java.util.concurrent.ConcurrentSkipListSet;
  * This class represents a query which is passed to a resolver. It contains all the information
  * needed to enable the Resolver to resolve the results.
  */
-public class Query implements TomahawkListItem {
+public class Query extends Cacheable implements AlphaComparable, ArtistAlphaComparable {
 
     public static final String TAG = Query.class.getSimpleName();
 
-    private static final ConcurrentHashMap<String, Query> sQueries
-            = new ConcurrentHashMap<>();
-
     private static final HashSet<String> sBlacklistedResults = new HashSet<>();
-
-    private String mCacheKey;
 
     private Track mBasicTrack;
 
-    private String mResultHint = "";
+    private String mResultHint;
 
     private String mFullTextQuery;
 
@@ -85,6 +84,9 @@ public class Query implements TomahawkListItem {
                     return 1;
                 }
             }
+            if (r1 == r2) {
+                return 0;
+            }
             Float score1 = mTrackResultScores.get(r1);
             Float score2 = mTrackResultScores.get(r2);
             int scoreResult = score2.compareTo(score1);
@@ -103,8 +105,18 @@ public class Query implements TomahawkListItem {
                 } else if (weightResult < 0) {
                     return -1;
                 } else {
-                    // Two identical trackScores and Resolver weights
-                    return 0;
+                    // We have two identical trackScores and Resolver weights.
+                    Integer hashCode1 = r1.hashCode();
+                    Integer hashCode2 = r2.hashCode();
+                    int hashCodeResult = hashCode1.compareTo(hashCode2);
+                    if (hashCodeResult > 0) {
+                        return 1;
+                    } else if (hashCodeResult < 0) {
+                        return -1;
+                    } else {
+                        // should never happen
+                        return 0;
+                    }
                 }
             }
         }
@@ -117,16 +129,11 @@ public class Query implements TomahawkListItem {
      * @param onlyLocal     whether or not this query should be resolved locally
      */
     private Query(String fullTextQuery, boolean onlyLocal) {
-        if (fullTextQuery == null) {
-            mFullTextQuery = "";
-        } else {
-            mFullTextQuery = fullTextQuery;
-        }
+        super(Query.class, getCacheKey(fullTextQuery, onlyLocal));
+
+        mFullTextQuery = fullTextQuery != null ? fullTextQuery : "";
         mIsFullTextQuery = true;
         mIsOnlyLocal = onlyLocal;
-        if (mCacheKey == null) {
-            mCacheKey = TomahawkUtils.getCacheKey(this);
-        }
     }
 
     /**
@@ -141,61 +148,55 @@ public class Query implements TomahawkListItem {
      */
     private Query(String trackName, String albumName, String artistName, String resultHint,
             boolean onlyLocal, boolean isFetchedViaHatchet) {
+        super(Query.class, getCacheKey(trackName, albumName, artistName, resultHint, onlyLocal));
+
         Artist artist = Artist.get(artistName);
         Album album = Album.get(albumName, artist);
         mBasicTrack = Track.get(trackName, album, artist);
-        if (resultHint != null) {
-            mResultHint = resultHint;
-        }
+        mResultHint = resultHint != null ? resultHint : "";
         mIsFullTextQuery = false;
         mIsOnlyLocal = onlyLocal;
         mIsFetchedViaHatchet = isFetchedViaHatchet;
-        if (mCacheKey == null) {
-            mCacheKey = TomahawkUtils.getCacheKey(this);
-        }
-        album.addQuery(this);
-        artist.addQuery(this);
     }
 
     /**
      * Static builder method which constructs a query or fetches it from the cache, resulting in
-     * Queries being unique by trackname/artistname/albumname/resulthint
+     * Queries being unique by trackname/artistname/albumname/resulthint/onlyLocal
      */
     public static Query get(String fullTextQuery, boolean onlyLocal) {
-        Query query = new Query(fullTextQuery, onlyLocal);
-        return ensureCache(query);
+        Cacheable cacheable = get(Query.class, getCacheKey(fullTextQuery, onlyLocal));
+        return cacheable != null ? (Query) cacheable : new Query(fullTextQuery, onlyLocal);
     }
 
     /**
      * Static builder method which constructs a query or fetches it from the cache, resulting in
-     * Queries being unique by trackname/artistname/albumname/resulthint
-     */
-    public static Query get(String trackName, String albumName, String artistName,
-            boolean onlyLocal) {
-        Query query = new Query(trackName, albumName, artistName, null, onlyLocal, false);
-        return ensureCache(query);
-    }
-
-    /**
-     * Static builder method which constructs a query or fetches it from the cache, resulting in
-     * Queries being unique by trackname/artistname/albumname/resulthint
-     */
-    public static Query get(String trackName, String albumName, String artistName,
-            boolean onlyLocal, boolean isFetchedViaHatchet) {
-        Query query = new Query(trackName, albumName, artistName, null, onlyLocal,
-                isFetchedViaHatchet);
-        return ensureCache(query);
-    }
-
-    /**
-     * Static builder method which constructs a query or fetches it from the cache, resulting in
-     * Queries being unique by trackname/artistname/albumname/resulthint
+     * Queries being unique by trackname/artistname/albumname/resulthint/onlyLocal
      */
     public static Query get(String trackName, String albumName, String artistName,
             String resultHint, boolean onlyLocal, boolean isFetchedViaHatchet) {
-        Query query = new Query(trackName, albumName, artistName, resultHint, onlyLocal,
-                isFetchedViaHatchet);
-        return ensureCache(query);
+        Cacheable cacheable = get(Query.class,
+                getCacheKey(trackName, albumName, artistName, resultHint, onlyLocal));
+        return cacheable != null ? (Query) cacheable :
+                new Query(trackName, albumName, artistName, resultHint, onlyLocal,
+                        isFetchedViaHatchet);
+    }
+
+    /**
+     * Static builder method which constructs a query or fetches it from the cache, resulting in
+     * Queries being unique by trackname/artistname/albumname/resulthint/onlyLocal
+     */
+    public static Query get(String trackName, String albumName, String artistName,
+            boolean onlyLocal) {
+        return get(trackName, albumName, artistName, null, onlyLocal, false);
+    }
+
+    /**
+     * Static builder method which constructs a query or fetches it from the cache, resulting in
+     * Queries being unique by trackname/artistname/albumname/resulthint/onlyLocal
+     */
+    public static Query get(String trackName, String albumName, String artistName,
+            boolean onlyLocal, boolean isFetchedViaHatchet) {
+        return get(trackName, albumName, artistName, null, onlyLocal, isFetchedViaHatchet);
     }
 
     /**
@@ -203,9 +204,8 @@ public class Query implements TomahawkListItem {
      * Queries being unique by trackname/artistname/albumname/resulthint
      */
     public static Query get(Track track, boolean onlyLocal) {
-        Query query = new Query(track.getName(), track.getAlbum().getName(),
-                track.getArtist().getName(), null, onlyLocal, false);
-        return ensureCache(query);
+        return get(track.getName(), track.getAlbum().getName(), track.getArtist().getName(), null,
+                onlyLocal, false);
     }
 
     /**
@@ -213,20 +213,12 @@ public class Query implements TomahawkListItem {
      * Queries being unique by trackname/artistname/albumname/resulthint
      */
     public static Query get(Result result, boolean onlyLocal) {
-        Query query = new Query(result.getTrack().getName(),
-                result.getTrack().getAlbum().getName(),
+        return get(result.getTrack().getName(), result.getTrack().getAlbum().getName(),
                 result.getTrack().getArtist().getName(), result.getCacheKey(), onlyLocal, false);
-        return ensureCache(query);
     }
 
-    /**
-     * If Query is already in our cache, return that. Otherwise add it to the cache.
-     */
-    private static Query ensureCache(Query query) {
-        if (!sQueries.containsKey(query.getCacheKey())) {
-            sQueries.put(query.getCacheKey(), query);
-        }
-        return sQueries.get(query.getCacheKey());
+    public static Query getByKey(String cacheKey) {
+        return (Query) get(Query.class, cacheKey);
     }
 
     public TomahawkMediaPlayer getMediaPlayerInterface() {
@@ -237,19 +229,8 @@ public class Query implements TomahawkListItem {
         }
     }
 
-    public String getCacheKey() {
-        return mCacheKey;
-    }
-
     public Track getBasicTrack() {
         return mBasicTrack;
-    }
-
-    /**
-     * Get the {@link Query} by providing its cache key
-     */
-    public static Query getQueryByKey(String key) {
-        return sQueries.get(key);
     }
 
     public static HashSet<String> getBlacklistedResults() {
@@ -260,7 +241,7 @@ public class Query implements TomahawkListItem {
      * @return An ArrayList<Query> which contains all tracks in the resultList, sorted by score.
      * Given as queries.
      */
-    public ArrayList<Query> getTrackQueries() {
+    public Playlist getResultPlaylist() {
         ArrayList<Query> queries = new ArrayList<>();
         for (Result result : mTrackResults) {
             if (!isOnlyLocal() || result.isLocal()) {
@@ -269,7 +250,8 @@ public class Query implements TomahawkListItem {
                 queries.add(query);
             }
         }
-        return queries;
+        return Playlist.fromQueryList(TomahawkMainActivity.getSessionUniqueStringId(),
+                mFullTextQuery, "", queries);
     }
 
     public Result getPreferredTrackResult() {
@@ -340,10 +322,7 @@ public class Query implements TomahawkListItem {
 
     public boolean isSolved() {
         Result result = getPreferredTrackResult();
-        if (result != null) {
-            return result.getCacheKey().equals(mResultHint);
-        }
-        return false;
+        return result != null && result.getCacheKey().equals(mResultHint);
     }
 
     public boolean isFetchedViaHatchet() {
@@ -379,11 +358,9 @@ public class Query implements TomahawkListItem {
             resultTrackName = cleanUpString(r.getTrack().getName(), false);
         }
 
-        int distanceArtist = TomahawkUtils
-                .getLevenshteinDistance(artistName, resultArtistName);
-        int distanceAlbum = TomahawkUtils
-                .getLevenshteinDistance(albumName, resultAlbumName);
-        int distanceTrack = TomahawkUtils.getLevenshteinDistance(trackName, resultTrackName);
+        int distanceArtist = LevensteinDistance.getDistance(artistName, resultArtistName);
+        int distanceAlbum = LevensteinDistance.getDistance(albumName, resultAlbumName);
+        int distanceTrack = LevensteinDistance.getDistance(trackName, resultTrackName);
 
         int maxLengthArtist = Math
                 .max(artistName.length(), resultArtistName.length());
@@ -409,8 +386,8 @@ public class Query implements TomahawkListItem {
 
             float maxResult = 0F;
             for (String resultSearchString : resultSearchStrings) {
-                int distanceArtistTrack = TomahawkUtils
-                        .getLevenshteinDistance(searchString, resultSearchString);
+                int distanceArtistTrack =
+                        LevensteinDistance.getDistance(searchString, resultSearchString);
                 int maxLengthArtistTrack = Math
                         .max(searchString.length(), resultSearchString.length());
                 float distanceScoreArtistTrack =
@@ -448,7 +425,6 @@ public class Query implements TomahawkListItem {
         return out;
     }
 
-    @Override
     public String getName() {
         if (isFullTextQuery()) {
             return mFullTextQuery;
@@ -456,12 +432,17 @@ public class Query implements TomahawkListItem {
         return getPreferredTrack().getName();
     }
 
-    @Override
+    /**
+     * @return the name that should be displayed
+     */
+    public String getPrettyName() {
+        return getName().length() > 0 ? getName() : "<unknown>";
+    }
+
     public Artist getArtist() {
         return getPreferredTrack().getArtist();
     }
 
-    @Override
     public Album getAlbum() {
         if (mIsFetchedViaHatchet) {
             return mBasicTrack.getAlbum();
@@ -469,14 +450,6 @@ public class Query implements TomahawkListItem {
         return getPreferredTrack().getAlbum();
     }
 
-    @Override
-    public ArrayList<Query> getQueries() {
-        ArrayList<Query> queries = new ArrayList<>();
-        queries.add(this);
-        return queries;
-    }
-
-    @Override
     public Image getImage() {
         if (getAlbum().getImage() != null && !TextUtils
                 .isEmpty(getAlbum().getImage().getImagePath())) {

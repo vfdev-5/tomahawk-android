@@ -17,14 +17,17 @@
  */
 package org.tomahawk.tomahawk_android.adapters;
 
+import com.github.rahatarmanahmed.cpv.CircularProgressView;
+
+import org.jdeferred.DoneCallback;
 import org.tomahawk.libtomahawk.collection.Image;
 import org.tomahawk.libtomahawk.collection.ScriptResolverCollection;
 import org.tomahawk.libtomahawk.infosystem.User;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.resolver.models.ScriptResolverCollectionMetaData;
+import org.tomahawk.libtomahawk.utils.ImageUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 
-import android.app.Activity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -38,10 +41,6 @@ import java.util.List;
  * This class populates the listview inside the navigation drawer
  */
 public class TomahawkMenuAdapter extends StickyBaseAdapter {
-
-    private final Activity mActivity;
-
-    private final LayoutInflater mLayoutInflater;
 
     private List<ResourceHolder> mResourceHolders = new ArrayList<>();
 
@@ -59,18 +58,19 @@ public class TomahawkMenuAdapter extends StickyBaseAdapter {
 
         public User user;
 
-        public boolean isCloudCollection;
+        public boolean isLoading;
     }
 
     /**
      * Constructs a new {@link TomahawkMenuAdapter}
-     *
-     * @param activity reference to whatever {@link Activity}
      */
-    public TomahawkMenuAdapter(Activity activity, ArrayList<ResourceHolder> resourceHolders) {
-        mActivity = activity;
-        mLayoutInflater = activity.getLayoutInflater();
+    public TomahawkMenuAdapter(ArrayList<ResourceHolder> resourceHolders) {
         mResourceHolders = resourceHolders;
+    }
+
+    public void setResourceHolders(ArrayList<ResourceHolder> resourceHolders) {
+        mResourceHolders = resourceHolders;
+        notifyDataSetChanged();
     }
 
     /**
@@ -109,28 +109,45 @@ public class TomahawkMenuAdapter extends StickyBaseAdapter {
     public View getView(int position, View convertView, ViewGroup parent) {
         Object item = getItem(position);
         ResourceHolder holder = (ResourceHolder) item;
+        LayoutInflater inflater = LayoutInflater.from(TomahawkApp.getContext());
         if (((ResourceHolder) item).user != null) {
-            View contentHeaderView = mLayoutInflater.inflate(
-                    R.layout.content_header_user_navdrawer, parent, false);
+            View contentHeaderView =
+                    inflater.inflate(R.layout.content_header_user_navdrawer, parent, false);
             TextView textView = (TextView) contentHeaderView.findViewById(R.id.textview1);
             textView.setText(holder.title.toUpperCase());
             TextView userTextView = (TextView) contentHeaderView.findViewById(R.id.usertextview1);
             ImageView userImageView =
                     (ImageView) contentHeaderView.findViewById(R.id.userimageview1);
-            TomahawkUtils.loadUserImageIntoImageView(TomahawkApp.getContext(), userImageView,
+            ImageUtils.loadUserImageIntoImageView(TomahawkApp.getContext(), userImageView,
                     holder.user, Image.getSmallImageSize(), userTextView);
             userImageView.setVisibility(View.VISIBLE);
             return contentHeaderView;
         } else {
-            View view = mLayoutInflater.inflate(R.layout.single_line_list_menu, parent, false);
-            TextView textView = (TextView) view
+            View view = inflater.inflate(R.layout.single_line_list_menu, parent, false);
+            final TextView textView = (TextView) view
                     .findViewById(R.id.single_line_list_menu_textview);
-            ImageView imageView = (ImageView) view.findViewById(R.id.icon_menu_imageview);
-            textView.setText(holder.title.toUpperCase());
+            final ImageView imageView = (ImageView) view.findViewById(R.id.icon_menu_imageview);
             if (holder.collection != null) {
+                holder.collection.getMetaData().done(
+                        new DoneCallback<ScriptResolverCollectionMetaData>() {
+                            @Override
+                            public void onDone(ScriptResolverCollectionMetaData result) {
+                                textView.setText(result.prettyname);
+                            }
+                        });
                 holder.collection.loadIcon(imageView, false);
             } else {
-                TomahawkUtils.loadDrawableIntoImageView(mActivity, imageView, holder.iconResId);
+                textView.setText(holder.title.toUpperCase());
+                ImageUtils.loadDrawableIntoImageView(TomahawkApp.getContext(), imageView,
+                        holder.iconResId);
+            }
+            CircularProgressView progressView =
+                    (CircularProgressView) view.findViewById(R.id.circularprogressview);
+            if (holder.isLoading) {
+                progressView.startAnimation();
+                progressView.setVisibility(View.VISIBLE);
+            } else {
+                progressView.setVisibility(View.GONE);
             }
             return view;
         }
@@ -147,15 +164,15 @@ public class TomahawkMenuAdapter extends StickyBaseAdapter {
      */
     @Override
     public View getHeaderView(int position, View convertView, ViewGroup parent) {
-        if (mResourceHolders.get(position).isCloudCollection) {
-            View headerView =
-                    mLayoutInflater.inflate(R.layout.menu_header_cloudcollection, parent, false);
+        if (mResourceHolders.get(position).collection != null) {
+            View headerView = LayoutInflater.from(TomahawkApp.getContext())
+                    .inflate(R.layout.menu_header_cloudcollection, parent, false);
             TextView textView = (TextView) headerView.findViewById(R.id.textview1);
             textView.setText(TomahawkApp.getContext().getString(
                     R.string.drawer_header_cloudcollections).toUpperCase());
             return headerView;
         } else {
-            return new View(mActivity);
+            return new View(TomahawkApp.getContext());
         }
     }
 
@@ -168,7 +185,7 @@ public class TomahawkMenuAdapter extends StickyBaseAdapter {
      */
     @Override
     public long getHeaderId(int position) {
-        if (mResourceHolders.get(position).isCloudCollection) {
+        if (mResourceHolders.get(position).collection != null) {
             return 1;
         }
         return 0;

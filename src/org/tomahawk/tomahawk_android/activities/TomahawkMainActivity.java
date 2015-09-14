@@ -22,6 +22,7 @@ import com.sothree.slidinguppanel.SlidingUpPanelLayout;
 import com.uservoice.uservoicesdk.Config;
 import com.uservoice.uservoicesdk.UserVoice;
 
+import org.jdeferred.DoneCallback;
 import org.tomahawk.libtomahawk.authentication.AuthenticatorManager;
 import org.tomahawk.libtomahawk.authentication.AuthenticatorUtils;
 import org.tomahawk.libtomahawk.authentication.HatchetAuthenticatorUtils;
@@ -29,6 +30,7 @@ import org.tomahawk.libtomahawk.collection.Album;
 import org.tomahawk.libtomahawk.collection.Artist;
 import org.tomahawk.libtomahawk.collection.Collection;
 import org.tomahawk.libtomahawk.collection.CollectionManager;
+import org.tomahawk.libtomahawk.collection.DbCollection;
 import org.tomahawk.libtomahawk.collection.Playlist;
 import org.tomahawk.libtomahawk.collection.ScriptResolverCollection;
 import org.tomahawk.libtomahawk.collection.UserCollection;
@@ -36,20 +38,22 @@ import org.tomahawk.libtomahawk.database.DatabaseHelper;
 import org.tomahawk.libtomahawk.database.TomahawkSQLiteHelper;
 import org.tomahawk.libtomahawk.infosystem.InfoRequestData;
 import org.tomahawk.libtomahawk.infosystem.InfoSystem;
+import org.tomahawk.libtomahawk.infosystem.User;
 import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Query;
-import org.tomahawk.libtomahawk.resolver.Resolver;
 import org.tomahawk.libtomahawk.resolver.Result;
+import org.tomahawk.libtomahawk.resolver.UserCollectionStubResolver;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverUrlResult;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.libtomahawk.utils.parser.XspfParser;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.adapters.SuggestionSimpleCursorAdapter;
 import org.tomahawk.tomahawk_android.adapters.TomahawkMenuAdapter;
 import org.tomahawk.tomahawk_android.dialogs.AskAccessConfigDialog;
+import org.tomahawk.tomahawk_android.dialogs.GMusicConfigDialog;
+import org.tomahawk.tomahawk_android.dialogs.InstallPluginConfigDialog;
 import org.tomahawk.tomahawk_android.fragments.ArtistPagerFragment;
-import org.tomahawk.tomahawk_android.fragments.CloudCollectionFragment;
 import org.tomahawk.tomahawk_android.fragments.CollectionPagerFragment;
 import org.tomahawk.tomahawk_android.fragments.ContentHeaderFragment;
 import org.tomahawk.tomahawk_android.fragments.PlaybackFragment;
@@ -60,7 +64,6 @@ import org.tomahawk.tomahawk_android.fragments.PreferencePagerFragment;
 import org.tomahawk.tomahawk_android.fragments.SearchPagerFragment;
 import org.tomahawk.tomahawk_android.fragments.SocialActionsFragment;
 import org.tomahawk.tomahawk_android.fragments.TomahawkFragment;
-import org.tomahawk.tomahawk_android.fragments.TracksFragment;
 import org.tomahawk.tomahawk_android.fragments.UserPagerFragment;
 import org.tomahawk.tomahawk_android.fragments.WelcomeFragment;
 import org.tomahawk.tomahawk_android.services.PlaybackService;
@@ -108,10 +111,13 @@ import android.view.MenuItem;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ListView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 
 import de.greenrobot.event.EventBus;
 import fr.castorflex.android.smoothprogressbar.SmoothProgressBar;
@@ -181,6 +187,8 @@ public class TomahawkMainActivity extends ActionBarActivity
 
     private StickyListHeadersListView mDrawerList;
 
+    private TomahawkMenuAdapter mTomahawkMenuAdapter;
+
     private ActionBarDrawerToggle mDrawerToggle;
 
     private CharSequence mTitle;
@@ -205,20 +213,36 @@ public class TomahawkMainActivity extends ActionBarActivity
 
     private Runnable mRunAfterInit;
 
+    private Map<Collection, Boolean> mCollectionLoadingMap = new HashMap<>();
+
     private Handler mShouldShowAnimationHandler;
 
     private final Runnable mShouldShowAnimationRunnable = new Runnable() {
         @Override
         public void run() {
-            if (ThreadManager.getInstance().isActive()
+            if (ThreadManager.get().isActive()
                     || (mPlaybackService != null && mPlaybackService.isPreparing())
-                    || ((UserCollection) CollectionManager.getInstance()
+                    || ((UserCollection) CollectionManager.get()
                     .getCollection(TomahawkApp.PLUGINNAME_USERCOLLECTION)).isWorking()) {
                 mSmoothProgressBar.setVisibility(View.VISIBLE);
             } else {
                 mSmoothProgressBar.setVisibility(View.GONE);
             }
             mShouldShowAnimationHandler.postDelayed(mShouldShowAnimationRunnable, 500);
+            for (final Collection collection : CollectionManager.get().getCollections()) {
+                if (collection instanceof DbCollection) {
+                    ((DbCollection) collection).isInitializing().then(new DoneCallback<Boolean>() {
+                        @Override
+                        public void onDone(Boolean result) {
+                            Boolean lastResult = mCollectionLoadingMap.get(collection);
+                            mCollectionLoadingMap.put(collection, result);
+                            if (lastResult == null || lastResult != result) {
+                                updateDrawer();
+                            }
+                        }
+                    });
+                }
+            }
         }
     };
 
@@ -265,9 +289,9 @@ public class TomahawkMainActivity extends ActionBarActivity
                 boolean noConnectivity =
                         intent.getBooleanExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY, false);
                 if (!noConnectivity) {
-                    AuthenticatorUtils hatchetAuthUtils = AuthenticatorManager.getInstance()
+                    AuthenticatorUtils hatchetAuthUtils = AuthenticatorManager.get()
                             .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-                    InfoSystem.getInstance().sendLoggedOps(hatchetAuthUtils);
+                    InfoSystem.get().sendLoggedOps(hatchetAuthUtils);
                 }
             }
         }
@@ -287,38 +311,51 @@ public class TomahawkMainActivity extends ActionBarActivity
         @Override
         public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
             HatchetAuthenticatorUtils authenticatorUtils
-                    = (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
+                    = (HatchetAuthenticatorUtils) AuthenticatorManager.get()
                     .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
             TomahawkMenuAdapter.ResourceHolder holder =
                     (TomahawkMenuAdapter.ResourceHolder) mDrawerList.getAdapter().getItem(position);
-            Bundle bundle = new Bundle();
-            if (holder.isCloudCollection) {
-                bundle.putString(TomahawkFragment.COLLECTION_ID, holder.id);
+            final Bundle bundle = new Bundle();
+            if (holder.collection != null) {
+                bundle.putString(TomahawkFragment.COLLECTION_ID, holder.collection.getId());
                 bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
                         ContentHeaderFragment.MODE_HEADER_STATIC);
                 FragmentUtils
-                        .replace(TomahawkMainActivity.this, CloudCollectionFragment.class, bundle);
+                        .replace(TomahawkMainActivity.this, CollectionPagerFragment.class, bundle);
             } else if (holder.id.equals(HUB_ID_USERPAGE)) {
-                if (authenticatorUtils.getLoggedInUser() == null) {
-                    return;
-                }
-                bundle.putString(TomahawkFragment.USER,
-                        authenticatorUtils.getLoggedInUser().getId());
-                bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
-                        ContentHeaderFragment.MODE_HEADER_STATIC_USER);
-                FragmentUtils.replace(TomahawkMainActivity.this, UserPagerFragment.class, bundle);
+                User.getSelf().done(new DoneCallback<User>() {
+                    @Override
+                    public void onDone(User user) {
+                        bundle.putString(TomahawkFragment.USER, user.getId());
+                        bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
+                                ContentHeaderFragment.MODE_HEADER_STATIC_USER);
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                FragmentUtils.replace(TomahawkMainActivity.this,
+                                        UserPagerFragment.class, bundle);
+                            }
+                        });
+                    }
+                });
             } else if (holder.id.equals(HUB_ID_FEED)) {
-                if (authenticatorUtils.getLoggedInUser() == null) {
-                    return;
-                }
-                bundle.putInt(TomahawkFragment.SHOW_MODE,
-                        SocialActionsFragment.SHOW_MODE_DASHBOARD);
-                bundle.putString(TomahawkFragment.USER,
-                        authenticatorUtils.getLoggedInUser().getId());
-                bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
-                        ContentHeaderFragment.MODE_ACTIONBAR_FILLED);
-                FragmentUtils
-                        .replace(TomahawkMainActivity.this, SocialActionsFragment.class, bundle);
+                User.getSelf().done(new DoneCallback<User>() {
+                    @Override
+                    public void onDone(User user) {
+                        bundle.putString(TomahawkFragment.USER, user.getId());
+                        bundle.putInt(TomahawkFragment.SHOW_MODE,
+                                SocialActionsFragment.SHOW_MODE_DASHBOARD);
+                        bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
+                                ContentHeaderFragment.MODE_ACTIONBAR_FILLED);
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                FragmentUtils.replace(TomahawkMainActivity.this,
+                                        SocialActionsFragment.class, bundle);
+                            }
+                        });
+                    }
+                });
             } else if (holder.id.equals(HUB_ID_COLLECTION)) {
                 bundle.putString(TomahawkFragment.COLLECTION_ID,
                         TomahawkApp.PLUGINNAME_USERCOLLECTION);
@@ -327,24 +364,39 @@ public class TomahawkMainActivity extends ActionBarActivity
                 FragmentUtils
                         .replace(TomahawkMainActivity.this, CollectionPagerFragment.class, bundle);
             } else if (holder.id.equals(HUB_ID_LOVEDTRACKS)) {
-                bundle.putString(PlaylistsFragment.PLAYLIST,
-                        DatabaseHelper.LOVEDITEMS_PLAYLIST_ID);
-                if (authenticatorUtils.getLoggedInUser() != null) {
-                    bundle.putString(TomahawkFragment.USER,
-                            authenticatorUtils.getLoggedInUser().getId());
-                }
-                bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
-                        ContentHeaderFragment.MODE_HEADER_DYNAMIC);
-                FragmentUtils
-                        .replace(TomahawkMainActivity.this, PlaylistEntriesFragment.class, bundle);
+                User.getSelf().done(new DoneCallback<User>() {
+                    @Override
+                    public void onDone(User user) {
+                        bundle.putInt(TomahawkFragment.SHOW_MODE,
+                                PlaylistEntriesFragment.SHOW_MODE_LOVEDITEMS);
+                        bundle.putString(TomahawkFragment.USER, user.getId());
+                        bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
+                                ContentHeaderFragment.MODE_HEADER_DYNAMIC);
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                FragmentUtils.replace(TomahawkMainActivity.this,
+                                        PlaylistEntriesFragment.class, bundle);
+                            }
+                        });
+                    }
+                });
             } else if (holder.id.equals(HUB_ID_PLAYLISTS)) {
-                if (authenticatorUtils.getLoggedInUser() != null) {
-                    bundle.putString(TomahawkFragment.USER,
-                            authenticatorUtils.getLoggedInUser().getId());
-                }
-                bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
-                        ContentHeaderFragment.MODE_HEADER_STATIC);
-                FragmentUtils.replace(TomahawkMainActivity.this, PlaylistsFragment.class, bundle);
+                User.getSelf().done(new DoneCallback<User>() {
+                    @Override
+                    public void onDone(User user) {
+                        bundle.putString(TomahawkFragment.USER, user.getId());
+                        bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
+                                ContentHeaderFragment.MODE_HEADER_STATIC);
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                FragmentUtils.replace(TomahawkMainActivity.this,
+                                        PlaylistsFragment.class, bundle);
+                            }
+                        });
+                    }
+                });
             } else if (holder.id.equals(HUB_ID_SETTINGS)) {
                 bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
                         ContentHeaderFragment.MODE_HEADER_STATIC_SMALL);
@@ -357,9 +409,18 @@ public class TomahawkMainActivity extends ActionBarActivity
         }
     }
 
+    /**
+     * If the {@link PipeLine} was able to parse a given url (like a link to a spotify track for
+     * example), then this method receives the result object.
+     *
+     * @param event the result object which contains the parsed data
+     */
     @SuppressWarnings("unused")
     public void onEventAsync(PipeLine.UrlResultsEvent event) {
         final Bundle bundle = new Bundle();
+        List<Query> queries;
+        Query query;
+        Playlist playlist;
         switch (event.mResult.type) {
             case PipeLine.URL_TYPE_ARTIST:
                 bundle.putString(TomahawkFragment.ARTIST,
@@ -380,34 +441,38 @@ public class TomahawkMainActivity extends ActionBarActivity
                 Artist artist = Artist.get(event.mResult.artist);
                 bundle.putString(TomahawkFragment.ALBUM,
                         Album.get(event.mResult.name, artist).getCacheKey());
+                bundle.putString(
+                        TomahawkFragment.COLLECTION_ID, TomahawkApp.PLUGINNAME_HATCHET);
                 bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
                         ContentHeaderFragment.MODE_HEADER_DYNAMIC);
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
-                        FragmentUtils.replace(TomahawkMainActivity.this, TracksFragment.class,
-                                bundle);
+                        FragmentUtils.replace(
+                                TomahawkMainActivity.this, PlaylistEntriesFragment.class, bundle);
                     }
                 });
                 break;
             case PipeLine.URL_TYPE_TRACK:
-                bundle.putString(TomahawkFragment.QUERY,
-                        Query.get(event.mResult.title, "", event.mResult.artist, false)
-                                .getCacheKey());
+                queries = new ArrayList<>();
+                query = Query.get(event.mResult.title, "", event.mResult.artist, false);
+                queries.add(query);
+                playlist = Playlist.fromQueryList(getSessionUniqueStringId(), "", "", queries);
+                bundle.putString(TomahawkFragment.PLAYLIST, playlist.getId());
                 bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
                         ContentHeaderFragment.MODE_HEADER_DYNAMIC);
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
-                        FragmentUtils.replace(TomahawkMainActivity.this, TracksFragment.class,
-                                bundle);
+                        FragmentUtils.replace(
+                                TomahawkMainActivity.this, PlaylistEntriesFragment.class, bundle);
                     }
                 });
                 break;
             case PipeLine.URL_TYPE_PLAYLIST:
-                ArrayList<Query> queries = new ArrayList<>();
+                queries = new ArrayList<>();
                 for (ScriptResolverUrlResult track : event.mResult.tracks) {
-                    Query query = Query.get(track.title, "", track.artist, false);
+                    query = Query.get(track.title, "", track.artist, false);
                     if (event.mResolver != null && event.mResolver.isEnabled()
                             && track.hint != null) {
                         Result result = Result.get(track.hint, query.getBasicTrack(),
@@ -417,7 +482,8 @@ public class TomahawkMainActivity extends ActionBarActivity
                     }
                     queries.add(query);
                 }
-                Playlist playlist = Playlist.fromQueryList(event.mResult.title, queries);
+                playlist = Playlist.fromQueryList(TomahawkMainActivity.getLifetimeUniqueStringId(),
+                        event.mResult.title, null, queries);
                 playlist.setFilled(true);
                 bundle.putString(TomahawkFragment.PLAYLIST, playlist.getId());
                 bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
@@ -508,10 +574,20 @@ public class TomahawkMainActivity extends ActionBarActivity
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        GMusicConfigDialog.ActivityResultEvent event = new GMusicConfigDialog.ActivityResultEvent();
+        event.resultCode = resultCode;
+        event.requestCode = requestCode;
+        EventBus.getDefault().post(event);
+    }
+
+    @Override
     public void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        UserCollection userCollection = (UserCollection) CollectionManager.getInstance()
+        PipeLine.get();
+
+        UserCollection userCollection = (UserCollection) CollectionManager.get()
                 .getCollection(TomahawkApp.PLUGINNAME_USERCOLLECTION);
         userCollection.loadMediaItems(true);
 
@@ -627,7 +703,7 @@ public class TomahawkMainActivity extends ActionBarActivity
                     || host.contains("toma.hk") || host.contains("beatsmusic.com")
                     || host.contains("deezer.com") || host.contains("rdio.com")
                     || host.contains("soundcloud.com")))) {
-                PipeLine.getInstance().lookupUrl(data.toString());
+                PipeLine.get().lookupUrl(data.toString());
             } else if ((pathSegments != null
                     && pathSegments.get(pathSegments.size() - 1).endsWith(".xspf"))
                     || (intent.getType() != null
@@ -652,11 +728,19 @@ public class TomahawkMainActivity extends ActionBarActivity
                         }
                     }
                 };
-                ThreadManager.getInstance().execute(r);
+                ThreadManager.get().execute(r);
+            } else if (pathSegments != null
+                    && (pathSegments.get(pathSegments.size() - 1).endsWith(".axe")
+                    || pathSegments.get(pathSegments.size() - 1).endsWith(".AXE"))) {
+                InstallPluginConfigDialog dialog = new InstallPluginConfigDialog();
+                Bundle args = new Bundle();
+                args.putString(InstallPluginConfigDialog.PATH_TO_AXE_URI_STRING, data.toString());
+                dialog.setArguments(args);
+                dialog.show(getSupportFragmentManager(), null);
             } else {
-                String albumName = null;
-                String trackName = null;
-                String artistName = null;
+                String albumName;
+                String trackName;
+                String artistName;
                 try {
                     MediaMetadataRetriever retriever = new MediaMetadataRetriever();
                     retriever.setDataSource(this, data);
@@ -667,25 +751,35 @@ public class TomahawkMainActivity extends ActionBarActivity
                     trackName =
                             retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE);
                     retriever.release();
-                } catch (IllegalArgumentException e) {
+                } catch (Exception e) {
                     Log.e(TAG, "handleIntent: " + e.getClass() + ": " + e.getLocalizedMessage());
+                    new Handler(Looper.getMainLooper()).post(new Runnable() {
+                        @Override
+                        public void run() {
+                            String msg = TomahawkApp.getContext().getString(R.string.invalid_file);
+                            Toast.makeText(TomahawkApp.getContext(), msg, Toast.LENGTH_LONG).show();
+                        }
+                    });
+                    return;
                 }
-                if (TextUtils.isEmpty(trackName)) {
+                if (TextUtils.isEmpty(trackName) && pathSegments != null) {
                     trackName = pathSegments.get(pathSegments.size() - 1);
                 }
                 Query query = Query.get(trackName, albumName, artistName, false);
-                Resolver resolver =
-                        PipeLine.getInstance().getResolver(TomahawkApp.PLUGINNAME_USERCOLLECTION);
-                if (resolver != null) {
-                    Result result = Result.get(data.toString(), query.getBasicTrack(), resolver);
-                    float trackScore = query.howSimilar(result);
-                    query.addTrackResult(result, trackScore);
-                    Bundle bundle = new Bundle();
-                    bundle.putString(TomahawkFragment.QUERY, query.getCacheKey());
-                    bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
-                            ContentHeaderFragment.MODE_HEADER_DYNAMIC);
-                    FragmentUtils.replace(TomahawkMainActivity.this, TracksFragment.class, bundle);
-                }
+                Result result = Result.get(data.toString(), query.getBasicTrack(),
+                        UserCollectionStubResolver.get());
+                float trackScore = query.howSimilar(result);
+                query.addTrackResult(result, trackScore);
+                Bundle bundle = new Bundle();
+                List<Query> queries = new ArrayList<>();
+                queries.add(query);
+                Playlist playlist = Playlist.fromQueryList(
+                        TomahawkMainActivity.getSessionUniqueStringId(), "", "", queries);
+                bundle.putString(TomahawkFragment.PLAYLIST, playlist.getId());
+                bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
+                        ContentHeaderFragment.MODE_HEADER_DYNAMIC);
+                FragmentUtils.replace(
+                        TomahawkMainActivity.this, PlaylistEntriesFragment.class, bundle);
             }
         }
     }
@@ -755,16 +849,20 @@ public class TomahawkMainActivity extends ActionBarActivity
         UserVoice.init(config, TomahawkMainActivity.this);
 
         //Resolve currently logged-in user
-        HatchetAuthenticatorUtils hatchetAuthUtils
-                = (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
-                .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-        String requestId =
-                InfoSystem.getInstance().resolve(hatchetAuthUtils.getLoggedInUser());
-        if (requestId != null) {
-            mCorrespondingRequestIds.add(requestId);
-        }
+        User.getSelf().done(new DoneCallback<User>() {
+            @Override
+            public void onDone(User user) {
+                String requestId = InfoSystem.get().resolve(user);
+                if (requestId != null) {
+                    mCorrespondingRequestIds.add(requestId);
+                }
+            }
+        });
 
         //Ask for notification service access if hatchet user logged in
+        HatchetAuthenticatorUtils hatchetAuthUtils
+                = (HatchetAuthenticatorUtils) AuthenticatorManager.get()
+                .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
         if (hatchetAuthUtils.isLoggedIn()) {
             attemptAskAccess();
         }
@@ -774,7 +872,6 @@ public class TomahawkMainActivity extends ActionBarActivity
 
             updateDrawer();
 
-            //Setup our services
             Intent intent = new Intent(TomahawkMainActivity.this,
                     PlaybackService.class);
             startService(intent);
@@ -790,15 +887,27 @@ public class TomahawkMainActivity extends ActionBarActivity
                                         PlaybackFragment.class.getName(), bundle),
                                 null)
                         .commitAllowingStateLoss();
-                FragmentUtils.addRootFragment(TomahawkMainActivity.this,
-                        hatchetAuthUtils.getLoggedInUser());
+                User.getSelf().done(new DoneCallback<User>() {
+                    @Override
+                    public void onDone(final User user) {
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                FragmentUtils.addRootFragment(TomahawkMainActivity.this, user);
 
-                SharedPreferences preferences =
-                        PreferenceManager.getDefaultSharedPreferences(this);
-                if (!preferences.getBoolean(
-                        TomahawkMainActivity.COACHMARK_WELCOMEFRAGMENT_DISABLED, false)) {
-                    FragmentUtils.add(this, WelcomeFragment.class, null, R.id.content_viewer_frame);
-                }
+                                SharedPreferences preferences =
+                                        PreferenceManager.getDefaultSharedPreferences(
+                                                TomahawkMainActivity.this);
+                                if (!preferences.getBoolean(
+                                        TomahawkMainActivity.COACHMARK_WELCOMEFRAGMENT_DISABLED,
+                                        false)) {
+                                    FragmentUtils.replace(TomahawkMainActivity.this,
+                                            WelcomeFragment.class, null, R.id.content_viewer_frame);
+                                }
+                            }
+                        });
+                    }
+                });
             } else {
                 boolean actionBarHidden = mSavedInstanceState
                         .getBoolean(SAVED_STATE_ACTION_BAR_HIDDEN, false);
@@ -875,7 +984,7 @@ public class TomahawkMainActivity extends ActionBarActivity
             @Override
             public boolean onQueryTextSubmit(String query) {
                 if (query != null && !TextUtils.isEmpty(query)) {
-                    DatabaseHelper.getInstance().addEntryToSearchHistory(query);
+                    DatabaseHelper.get().addEntryToSearchHistory(query);
                     Bundle bundle = new Bundle();
                     bundle.putString(TomahawkFragment.QUERY_STRING, query);
                     bundle.putInt(TomahawkFragment.CONTENT_HEADER_MODE,
@@ -893,7 +1002,7 @@ public class TomahawkMainActivity extends ActionBarActivity
 
             @Override
             public boolean onQueryTextChange(String newText) {
-                Cursor cursor = DatabaseHelper.getInstance().getSearchHistoryCursor(newText);
+                Cursor cursor = DatabaseHelper.get().getSearchHistoryCursor(newText);
                 if (cursor.getCount() != 0) {
                     String[] columns = new String[]{
                             TomahawkSQLiteHelper.SEARCHHISTORY_COLUMN_ENTRY};
@@ -980,80 +1089,93 @@ public class TomahawkMainActivity extends ActionBarActivity
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 attemptAskAccess();
             }
-            HatchetAuthenticatorUtils authenticatorUtils
-                    = (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
-                    .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-            String requestId =
-                    InfoSystem.getInstance().resolve(authenticatorUtils.getLoggedInUser());
-            if (requestId != null) {
-                mCorrespondingRequestIds.add(requestId);
-            }
+            User.getSelf().done(new DoneCallback<User>() {
+                @Override
+                public void onDone(User user) {
+                    String requestId = InfoSystem.get().resolve(user);
+                    if (requestId != null) {
+                        mCorrespondingRequestIds.add(requestId);
+                    }
+                }
+            });
         }
         updateDrawer();
     }
 
     public void updateDrawer() {
-        HatchetAuthenticatorUtils authenticatorUtils
-                = (HatchetAuthenticatorUtils) AuthenticatorManager.getInstance()
-                .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
-        // Set up the TomahawkMenuAdapter. Give it its set of menu item texts and icons to display
-        mDrawerList = (StickyListHeadersListView) findViewById(R.id.left_drawer);
-        final ArrayList<TomahawkMenuAdapter.ResourceHolder> holders = new ArrayList<>();
-        TomahawkMenuAdapter.ResourceHolder holder = new TomahawkMenuAdapter.ResourceHolder();
-        if (authenticatorUtils.getLoggedInUser() != null) {
-            holder.id = HUB_ID_USERPAGE;
-            holder.title = authenticatorUtils.getLoggedInUser().getName();
-            holder.image = authenticatorUtils.getLoggedInUser().getImage();
-            holder.user = authenticatorUtils.getLoggedInUser();
-            holders.add(holder);
-            holder = new TomahawkMenuAdapter.ResourceHolder();
-            holder.id = HUB_ID_FEED;
-            holder.title = getString(R.string.drawer_title_feed);
-            holder.iconResId = R.drawable.ic_action_dashboard;
-            holders.add(holder);
-        }
-        holder = new TomahawkMenuAdapter.ResourceHolder();
-        holder.id = HUB_ID_COLLECTION;
-        holder.title = getString(R.string.drawer_title_collection);
-        holder.iconResId = R.drawable.ic_action_collection;
-        holders.add(holder);
-        holder = new TomahawkMenuAdapter.ResourceHolder();
-        holder.id = HUB_ID_LOVEDTRACKS;
-        holder.title = getString(R.string.drawer_title_lovedtracks);
-        holder.iconResId = R.drawable.ic_action_favorites;
-        holders.add(holder);
-        holder = new TomahawkMenuAdapter.ResourceHolder();
-        holder.id = HUB_ID_PLAYLISTS;
-        holder.title = getString(R.string.drawer_title_playlists);
-        holder.iconResId = R.drawable.ic_action_playlist_light;
-        holders.add(holder);
-        holder = new TomahawkMenuAdapter.ResourceHolder();
-        holder.id = HUB_ID_SETTINGS;
-        holder.title = getString(R.string.drawer_title_settings);
-        holder.iconResId = R.drawable.ic_action_settings;
-        holders.add(holder);
-        for (Collection collection : CollectionManager.getInstance().getCollections()) {
-            if (collection instanceof ScriptResolverCollection) {
-                ScriptResolverCollection resolverCollection =
-                        (ScriptResolverCollection) collection;
-                holder = new TomahawkMenuAdapter.ResourceHolder();
-                holder.id = resolverCollection.getId();
-                holder.title = resolverCollection.getName();
-                holder.collection = resolverCollection;
-                holder.isCloudCollection = true;
-                holders.add(holder);
-            }
-        }
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
+        User.getSelf().done(new DoneCallback<User>() {
             @Override
-            public void run() {
-                TomahawkMenuAdapter slideMenuAdapter =
-                        new TomahawkMenuAdapter(TomahawkMainActivity.this, holders);
-                mDrawerList.setAdapter(slideMenuAdapter);
+            public void onDone(User user) {
+                HatchetAuthenticatorUtils authenticatorUtils
+                        = (HatchetAuthenticatorUtils) AuthenticatorManager.get()
+                        .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET);
+                // Set up the TomahawkMenuAdapter. Give it its set of menu item texts and icons to display
+                mDrawerList = (StickyListHeadersListView) findViewById(R.id.left_drawer);
+                final ArrayList<TomahawkMenuAdapter.ResourceHolder> holders = new ArrayList<>();
+                TomahawkMenuAdapter.ResourceHolder holder
+                        = new TomahawkMenuAdapter.ResourceHolder();
+                if (authenticatorUtils.isLoggedIn()) {
+                    holder.id = HUB_ID_USERPAGE;
+                    holder.title = user.getName();
+                    holder.image = user.getImage();
+                    holder.user = user;
+                    holders.add(holder);
+                    holder = new TomahawkMenuAdapter.ResourceHolder();
+                    holder.id = HUB_ID_FEED;
+                    holder.title = getString(R.string.drawer_title_feed);
+                    holder.iconResId = R.drawable.ic_action_dashboard;
+                    holders.add(holder);
+                }
+                holder = new TomahawkMenuAdapter.ResourceHolder();
+                holder.id = HUB_ID_COLLECTION;
+                holder.title = getString(R.string.drawer_title_collection);
+                holder.iconResId = R.drawable.ic_action_collection;
+                Collection userCollection = CollectionManager.get().getCollection(
+                        TomahawkApp.PLUGINNAME_USERCOLLECTION);
+                Boolean isLoading = mCollectionLoadingMap.get(userCollection);
+                holder.isLoading = isLoading != null && isLoading;
+                holders.add(holder);
+                holder = new TomahawkMenuAdapter.ResourceHolder();
+                holder.id = HUB_ID_LOVEDTRACKS;
+                holder.title = getString(R.string.drawer_title_lovedtracks);
+                holder.iconResId = R.drawable.ic_action_favorites;
+                holders.add(holder);
+                holder = new TomahawkMenuAdapter.ResourceHolder();
+                holder.id = HUB_ID_PLAYLISTS;
+                holder.title = getString(R.string.drawer_title_playlists);
+                holder.iconResId = R.drawable.ic_action_playlist_light;
+                holders.add(holder);
+                holder = new TomahawkMenuAdapter.ResourceHolder();
+                holder.id = HUB_ID_SETTINGS;
+                holder.title = getString(R.string.drawer_title_settings);
+                holder.iconResId = R.drawable.ic_action_settings;
+                holders.add(holder);
+                for (Collection collection : CollectionManager.get().getCollections()) {
+                    if (collection instanceof ScriptResolverCollection) {
+                        ScriptResolverCollection resolverCollection
+                                = (ScriptResolverCollection) collection;
+                        holder = new TomahawkMenuAdapter.ResourceHolder();
+                        holder.collection = resolverCollection;
+                        isLoading = mCollectionLoadingMap.get(resolverCollection);
+                        holder.isLoading = isLoading != null && isLoading;
+                        holders.add(holder);
+                    }
+                }
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (mDrawerList.getAdapter() == null) {
+                            mTomahawkMenuAdapter = new TomahawkMenuAdapter(holders);
+                            mDrawerList.setAdapter(mTomahawkMenuAdapter);
+                        } else {
+                            mTomahawkMenuAdapter.setResourceHolders(holders);
+                        }
+                    }
+                });
+
+                mDrawerList.setOnItemClickListener(new DrawerItemClickListener());
             }
         });
-
-        mDrawerList.setOnItemClickListener(new DrawerItemClickListener());
     }
 
     public void closeDrawer() {
@@ -1230,7 +1352,7 @@ public class TomahawkMainActivity extends ActionBarActivity
             if (!preferences.getBoolean(COACHMARK_SEEK_DISABLED, false)
                     && preferences.getLong(COACHMARK_SEEK_TIMESTAMP, 0) + 259200000
                     < System.currentTimeMillis()) {
-                final View coachMark = TomahawkUtils.ensureInflation(mPlaybackPanel,
+                final View coachMark = ViewUtils.ensureInflation(mPlaybackPanel,
                         R.id.playbackpanel_seek_coachmark_stub, R.id.playbackpanel_seek_coachmark);
                 coachMark.findViewById(R.id.close_button).setOnClickListener(
                         new View.OnClickListener() {
@@ -1294,7 +1416,7 @@ public class TomahawkMainActivity extends ActionBarActivity
      * listener, if the user is logged into Hatchet and we don't already have access
      */
     public void askAccess() {
-        if (AuthenticatorManager.getInstance()
+        if (AuthenticatorManager.get()
                 .getAuthenticatorUtils(TomahawkApp.PLUGINNAME_HATCHET).isLoggedIn()) {
             SharedPreferences preferences = PreferenceManager
                     .getDefaultSharedPreferences(TomahawkApp.getContext());

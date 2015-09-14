@@ -1,15 +1,16 @@
 package org.tomahawk.libtomahawk.resolver;
 
-import com.google.common.base.Charsets;
-import com.google.common.io.Files;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import com.squareup.okhttp.Response;
+
+import org.apache.commons.io.Charsets;
+import org.apache.commons.io.FileUtils;
 import org.tomahawk.libtomahawk.resolver.models.ScriptInterfaceRequestOptions;
 import org.tomahawk.libtomahawk.resolver.models.ScriptResolverData;
-import org.tomahawk.libtomahawk.resolver.models.ScriptResolverFuzzyIndex;
 import org.tomahawk.libtomahawk.utils.GsonHelper;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.NetworkUtils;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
 
@@ -19,9 +20,8 @@ import android.webkit.JavascriptInterface;
 
 import java.io.File;
 import java.io.IOException;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import de.greenrobot.event.EventBus;
@@ -49,9 +49,10 @@ public class ScriptInterface {
             mReqId = reqId;
         }
 
-        public void call(TomahawkUtils.HttpResponse response) {
-            mScriptAccount.nativeAsyncRequestDone(mReqId, response.mResponseText,
-                    response.mResponseHeaders, response.mStatus, response.mStatusText);
+        public void call(String responseText, Map<String, List<String>> responseHeaders, int status,
+                String statusText) {
+            mScriptAccount.nativeAsyncRequestDone(
+                    mReqId, responseText, responseHeaders, status, statusText);
         }
     }
 
@@ -120,7 +121,8 @@ public class ScriptInterface {
                 try {
                     Map<String, String> extraHeaders = new HashMap<>();
                     if (!TextUtils.isEmpty(stringifiedExtraHeaders)) {
-                        extraHeaders = GsonHelper.get().fromJson(stringifiedExtraHeaders, Map.class);
+                        extraHeaders = GsonHelper.get()
+                                .fromJson(stringifiedExtraHeaders, Map.class);
                     }
                     ScriptInterfaceRequestOptions options = null;
                     if (!TextUtils.isEmpty(stringifiedOptions)) {
@@ -141,10 +143,20 @@ public class ScriptInterface {
                         password = options.password;
                         data = options.data;
                     }
-                    TomahawkUtils
-                            .httpRequest(method, url, extraHeaders, username, password, data,
-                                    callback);
-                } catch (NoSuchAlgorithmException | IOException | KeyManagementException e) {
+                    Response response = NetworkUtils.httpRequest(
+                            method, url, extraHeaders, username, password, data, true);
+                    String responseText = response.body().string();
+                    Map<String, List<String>> responseHeaders = new HashMap<>();
+                    for (String headerName : response.headers().names()) {
+                        responseHeaders.put(headerName.toLowerCase(), response.headers(headerName));
+                    }
+                    int status = response.code();
+                    String statusText = response.message();
+
+                    if (callback != null) {
+                        callback.call(responseText, responseHeaders, status, statusText);
+                    }
+                } catch (IOException e) {
                     Log.e(TAG, "nativeAsyncRequestString: " + e.getClass() + ": "
                             + e.getLocalizedMessage());
                 }
@@ -153,94 +165,13 @@ public class ScriptInterface {
     }
 
     @JavascriptInterface
-    public boolean hasFuzzyIndex() {
-        if (mScriptAccount.getScriptResolver() != null) {
-            return mScriptAccount.getScriptResolver().hasFuzzyIndex();
-        } else {
-            Log.e(TAG, "hasFuzzyIndex - ScriptResolver not set in ScriptAccount: "
-                    + mScriptAccount.getName());
-            return false;
-        }
-    }
-
-    @JavascriptInterface
-    public void addToFuzzyIndexString(String stringifiedIndexList) {
-        if (mScriptAccount.getScriptResolver() != null) {
-            if (mScriptAccount.getScriptResolver().hasFuzzyIndex()) {
-                ScriptResolverFuzzyIndex[] indexList = GsonHelper.get().fromJson(stringifiedIndexList,
-                        ScriptResolverFuzzyIndex[].class);
-                mScriptAccount.getScriptResolver().getFuzzyIndex()
-                        .addScriptResolverFuzzyIndexList(indexList);
-            } else {
-                Log.e(TAG, "addToFuzzyIndexString: Couldn't add indexList to fuzzy index, no fuzzy "
-                        + "index available");
-            }
-        } else {
-            Log.e(TAG, "addToFuzzyIndexString - ScriptResolver not set in ScriptAccount: "
-                    + mScriptAccount.getName());
-        }
-    }
-
-    @JavascriptInterface
-    public void createFuzzyIndexString(String stringifiedIndexList) {
-        if (mScriptAccount.getScriptResolver() != null) {
-            mScriptAccount.getScriptResolver().createFuzzyIndex();
-            ScriptResolverFuzzyIndex[] indexList = GsonHelper.get().fromJson(stringifiedIndexList,
-                    ScriptResolverFuzzyIndex[].class);
-            mScriptAccount.getScriptResolver().getFuzzyIndex()
-                    .addScriptResolverFuzzyIndexList(indexList);
-        } else {
-            Log.e(TAG, "createFuzzyIndexString - ScriptResolver not set in ScriptAccount: "
-                    + mScriptAccount.getName());
-        }
-    }
-
-    @JavascriptInterface
-    public String searchFuzzyIndexString(String query) {
-        if (mScriptAccount.getScriptResolver() != null
-                && mScriptAccount.getScriptResolver().hasFuzzyIndex()) {
-            double[][] results = mScriptAccount.getScriptResolver().getFuzzyIndex()
-                    .search(Query.get(query, false));
-            return GsonHelper.get().toJson(results);
-        } else {
-            Log.e(TAG, "searchFuzzyIndexString - ScriptResolver not set in ScriptAccount: "
-                    + mScriptAccount.getName());
-        }
-        return null;
-    }
-
-    @JavascriptInterface
-    public String resolveFromFuzzyIndexString(String artist, String album, String title) {
-        if (mScriptAccount.getScriptResolver() != null
-                && mScriptAccount.getScriptResolver().hasFuzzyIndex()) {
-            double[][] results = mScriptAccount.getScriptResolver().getFuzzyIndex().search(
-                    Query.get(title, album, artist, false));
-            return GsonHelper.get().toJson(results);
-        } else {
-            Log.e(TAG, "resolveFromFuzzyIndexString - ScriptResolver not set in ScriptAccount: "
-                    + mScriptAccount.getName());
-        }
-        return null;
-    }
-
-    @JavascriptInterface
-    public void deleteFuzzyIndex() {
-        if (mScriptAccount.getScriptResolver() != null
-                && mScriptAccount.getScriptResolver().getFuzzyIndex() != null) {
-            mScriptAccount.getScriptResolver().getFuzzyIndex().deleteIndex();
-        } else {
-            Log.e(TAG, "deleteFuzzyIndex - ScriptResolver not set in ScriptAccount: "
-                    + mScriptAccount.getName());
-        }
-    }
-
-    @JavascriptInterface
     public void localStorageSetItem(String key, String value) {
         String dirPath = TomahawkApp.getContext().getFilesDir().getAbsolutePath()
                 + File.separator + "TomahawkWebViewStorage";
         new File(dirPath).mkdirs();
         try {
-            Files.write(value, new File(dirPath + File.separator + key), Charsets.UTF_8);
+            FileUtils.writeStringToFile(new File(dirPath + File.separator + key), value,
+                    Charsets.UTF_8);
         } catch (IOException e) {
             Log.e(TAG, "setItem: " + e.getClass() + ": " + e.getLocalizedMessage());
         }
@@ -252,7 +183,8 @@ public class ScriptInterface {
                 + File.separator + "TomahawkWebViewStorage";
         new File(dirPath).mkdirs();
         try {
-            return Files.toString(new File(dirPath + File.separator + key), Charsets.UTF_8);
+            return FileUtils
+                    .readFileToString(new File(dirPath + File.separator + key), Charsets.UTF_8);
         } catch (IOException e) {
             Log.e(TAG, "getItem: " + e.getClass() + ": " + e.getLocalizedMessage());
         }
@@ -331,5 +263,10 @@ public class ScriptInterface {
     @JavascriptInterface
     public void unregisterScriptPlugin(String type, String objectId) {
         mScriptAccount.unregisterScriptPlugin(type, objectId);
+    }
+
+    @JavascriptInterface
+    public void invokeNativeScriptJob(int requestId, String methodName, String paramsString) {
+        mScriptAccount.invokeNativeScriptJob(requestId, methodName, paramsString);
     }
 }

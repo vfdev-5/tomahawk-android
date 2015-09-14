@@ -19,11 +19,14 @@ package org.tomahawk.libtomahawk.collection;
 
 import org.tomahawk.libtomahawk.resolver.Query;
 import org.tomahawk.tomahawk_android.activities.TomahawkMainActivity;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
+
+import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,14 +34,31 @@ import java.util.concurrent.ConcurrentHashMap;
  * A {@link Playlist} is a {@link org.tomahawk.libtomahawk.collection.Playlist} created by the user
  * and stored in the database
  */
-public class Playlist implements TomahawkListItem {
+public class Playlist extends Cacheable implements AlphaComparable {
+
+    private static final String TAG = Playlist.class.getSimpleName();
 
     private String mName = "";
 
-    private ArrayList<PlaylistEntry> mEntries = new ArrayList<>();
+    private CollectionCursor<PlaylistEntry> mCursor = null;
 
-    private static final ConcurrentHashMap<String, Playlist> sPlaylists
-            = new ConcurrentHashMap<>();
+    private List<PlaylistEntry> mAddedEntries = new ArrayList<>();
+
+    private Map<PlaylistEntry, Index> mCachedEntries = new HashMap<>();
+
+    private List<Index> mIndex = new ArrayList<>();
+
+    private static class Index {
+
+        protected Index(int index, boolean fromMergedItems) {
+            mIndex = index;
+            mFromMergedItems = fromMergedItems;
+        }
+
+        int mIndex;
+
+        boolean mFromMergedItems;
+    }
 
     private String mId;
 
@@ -55,14 +75,10 @@ public class Playlist implements TomahawkListItem {
     /**
      * Construct a new empty {@link Playlist}.
      */
-    private Playlist(String id, String name, String currentRevision) {
-        if (name != null) {
-            mName = name;
-        }
+    private Playlist(String id) {
+        super(Playlist.class, id);
+
         mId = id;
-        if (currentRevision != null) {
-            mCurrentRevision = currentRevision;
-        }
     }
 
     /**
@@ -71,19 +87,9 @@ public class Playlist implements TomahawkListItem {
      *
      * @return {@link Playlist} with the given parameters
      */
-    public static Playlist get(String id, String name, String currentRevision) {
-        Playlist playlist = new Playlist(id, name, currentRevision);
-        return ensureCache(playlist);
-    }
-
-    /**
-     * If PlaylistEntry is already in our cache, return that. Otherwise add it to the cache.
-     */
-    private static Playlist ensureCache(Playlist playlist) {
-        if (!sPlaylists.containsKey(playlist.getCacheKey())) {
-            sPlaylists.put(playlist.getCacheKey(), playlist);
-        }
-        return sPlaylists.get(playlist.getCacheKey());
+    public static Playlist get(String id) {
+        Cacheable cacheable = get(Playlist.class, id);
+        return cacheable != null ? (Playlist) cacheable : new Playlist(id);
     }
 
     /**
@@ -91,15 +97,22 @@ public class Playlist implements TomahawkListItem {
      *
      * @return a reference to the constructed {@link Playlist}
      */
-    public static Playlist fromEntriesList(String name, String currentRevision,
-            ArrayList<PlaylistEntry> playlistEntries) {
-        String id = TomahawkMainActivity.getLifetimeUniqueStringId();
-        if (currentRevision == null) {
-            currentRevision = "";
-        }
-        Playlist pl = Playlist.get(id, name, currentRevision);
-        pl.setEntries(playlistEntries);
-        return pl;
+    public static Playlist fromEntriesList(String id, String name, String currentRevision,
+            List<PlaylistEntry> entries) {
+        CollectionCursor<PlaylistEntry> cursor =
+                new CollectionCursor<>(entries, PlaylistEntry.class);
+        return fromCursor(id, name, currentRevision, cursor);
+    }
+
+    /**
+     * Create a {@link Playlist} from a list of {@link PlaylistEntry}s.
+     *
+     * @return a reference to the constructed {@link Playlist}
+     */
+    public static Playlist fromEmptyList(String id, String name) {
+        CollectionCursor<PlaylistEntry> cursor =
+                new CollectionCursor<>(new ArrayList<PlaylistEntry>(), PlaylistEntry.class);
+        return fromCursor(id, name, null, cursor);
     }
 
     /**
@@ -107,50 +120,63 @@ public class Playlist implements TomahawkListItem {
      *
      * @return a reference to the constructed {@link Playlist}
      */
-    public static Playlist fromQueryList(String name, String currentRevision,
-            ArrayList<Query> queries) {
-        String id = TomahawkMainActivity.getLifetimeUniqueStringId();
-        if (currentRevision == null) {
-            currentRevision = "";
-        }
-        Playlist pl = Playlist.get(id, name, currentRevision);
-        ArrayList<PlaylistEntry> playlistEntries = new ArrayList<>();
+    public static Playlist fromQueryList(String id, String name, String currentRevision,
+            List<Query> queries) {
+        List<PlaylistEntry> entries = new ArrayList<>();
         for (Query query : queries) {
-            playlistEntries.add(PlaylistEntry.get(id, query,
+            entries.add(PlaylistEntry.get(id, query,
                     TomahawkMainActivity.getLifetimeUniqueStringId()));
         }
-        pl.setEntries(playlistEntries);
-        return pl;
+        CollectionCursor<PlaylistEntry> cursor =
+                new CollectionCursor<>(entries, PlaylistEntry.class);
+        return fromCursor(id, name, currentRevision, cursor);
     }
 
     /**
-     * Create a {@link Playlist} from a list of {@link org.tomahawk.libtomahawk.resolver.Query}s.
+     * Create a {@link Playlist} from a {@link CollectionCursor} containing {@link PlaylistEntry}s.
      *
      * @return a reference to the constructed {@link Playlist}
      */
-    public static Playlist fromQueryList(String name, ArrayList<Query> queries) {
-        return Playlist.fromQueryList(name, null, queries);
+    public static Playlist fromCursor(String id, String name, String currentRevision,
+            CollectionCursor<PlaylistEntry> cursor) {
+        Playlist pl = Playlist.get(id);
+        pl.setName(name);
+        pl.setCurrentRevision(currentRevision);
+        pl.setCursor(cursor);
+        return pl;
+    }
+
+    public void clear() {
+        mAddedEntries.clear();
+        mCachedEntries.clear();
+        mIndex.clear();
+        mCursor = null;
+    }
+
+    public void setCursor(CollectionCursor<PlaylistEntry> cursor) {
+        mCursor = cursor;
+        initIndex();
+    }
+
+    private void initIndex() {
+        mAddedEntries.clear();
+        mCachedEntries.clear();
+        mIndex.clear();
+        for (int i = 0; i < mCursor.size(); i++) {
+            mIndex.add(new Index(i, false));
+        }
     }
 
     /**
      * Get the {@link org.tomahawk.libtomahawk.collection.Playlist} by providing its cache key. Only
      * use this for playlists that are not stored in the database!
      */
-    public static Playlist getPlaylistById(String key) {
-        return sPlaylists.get(key);
-    }
-
-    public String getCacheKey() {
-        return mId;
+    public static Playlist getByKey(String id) {
+        return (Playlist) get(Playlist.class, id);
     }
 
     public String getId() {
         return mId;
-    }
-
-    public void setId(String id) {
-        mId = id;
-        ensureCache(this);
     }
 
     public String getHatchetId() {
@@ -162,11 +188,7 @@ public class Playlist implements TomahawkListItem {
     }
 
     public void setCurrentRevision(String currentRevision) {
-        if (currentRevision != null) {
-            mCurrentRevision = currentRevision;
-        } else {
-            mCurrentRevision = "";
-        }
+        mCurrentRevision = currentRevision == null ? "" : currentRevision;
     }
 
     public String getCurrentRevision() {
@@ -183,8 +205,8 @@ public class Playlist implements TomahawkListItem {
 
     public void updateTopArtistNames() {
         final HashMap<String, Integer> countMap = new HashMap<>();
-        for (PlaylistEntry entry : mEntries) {
-            String artistName = entry.getArtist().getName();
+        for (int i = 0; i < size(); i++) {
+            String artistName = getArtistName(i);
             if (countMap.containsKey(artistName)) {
                 countMap.put(artistName, countMap.get(artistName) + 1);
             } else {
@@ -208,49 +230,67 @@ public class Playlist implements TomahawkListItem {
     }
 
     /**
-     * @return this object' name
+     * @return this {@link Playlist}'s name
      */
-    @Override
     public String getName() {
         return mName;
     }
 
     /**
-     * Set the name of this object
+     * Set the name of this {@link Playlist}
      *
      * @param name the name to be set
      */
     public void setName(String name) {
-        if (name != null) {
-            this.mName = name;
-        }
+        mName = name == null ? "" : name;
     }
 
     /**
      * Set this {@link Playlist}'s {@link Query}s
      */
-    public void setEntries(ArrayList<PlaylistEntry> entries) {
-        mEntries = entries;
+    public void setEntries(List<PlaylistEntry> entries) {
+        mCursor = new CollectionCursor<>(entries, PlaylistEntry.class);
+    }
+
+    public PlaylistEntry getEntry(Index index) {
+        PlaylistEntry entry;
+        if (index.mFromMergedItems) {
+            entry = mAddedEntries.get(index.mIndex);
+        } else {
+            entry = mCursor.get(index.mIndex);
+        }
+        mCachedEntries.put(entry, index);
+        return entry;
     }
 
     /**
-     * @return the next {@link Query}
+     * @return the next {@link PlaylistEntry}
      */
     public PlaylistEntry getNextEntry(PlaylistEntry entry) {
-        int index = mEntries.indexOf(entry);
-        if (index + 1 < mEntries.size()) {
-            return mEntries.get(index + 1);
+        Index index = mCachedEntries.get(entry);
+        if (index == null) {
+            throw new RuntimeException("Couldn't find cached PlaylistEntry.");
+        }
+        int position = mIndex.indexOf(index);
+        if (position + 1 < mIndex.size()) {
+            Index nextIndex = mIndex.get(position + 1);
+            return getEntry(nextIndex);
         }
         return null;
     }
 
     /**
-     * @return the previous {@link Query}
+     * @return the previous {@link PlaylistEntry}
      */
     public PlaylistEntry getPreviousEntry(PlaylistEntry entry) {
-        int index = mEntries.indexOf(entry);
-        if (index - 1 >= 0) {
-            return mEntries.get(index - 1);
+        Index index = mCachedEntries.get(entry);
+        if (index == null) {
+            throw new RuntimeException("Couldn't find cached PlaylistEntry.");
+        }
+        int position = mIndex.indexOf(index);
+        if (position - 1 >= 0) {
+            Index nextIndex = mIndex.get(position - 1);
+            return getEntry(nextIndex);
         }
         return null;
     }
@@ -259,20 +299,14 @@ public class Playlist implements TomahawkListItem {
      * @return the first {@link PlaylistEntry} of this playlist
      */
     public PlaylistEntry getFirstEntry() {
-        if (mEntries.isEmpty()) {
-            return null;
-        }
-        return mEntries.get(0);
+        return getEntry(mIndex.get(0));
     }
 
     /**
      * @return the last {@link PlaylistEntry} of this playlist
      */
     public PlaylistEntry getLastEntry() {
-        if (mEntries.isEmpty()) {
-            return null;
-        }
-        return mEntries.get(mEntries.size() - 1);
+        return getEntry(mIndex.get(mIndex.size() - 1));
     }
 
     /**
@@ -287,106 +321,73 @@ public class Playlist implements TomahawkListItem {
      * @return true, if the {@link Playlist} has a next {@link PlaylistEntry}, otherwise false
      */
     public boolean hasNextEntry(PlaylistEntry entry) {
-        return getNextEntry(entry) != null;
+        Index index = mCachedEntries.get(entry);
+        if (index == null) {
+            throw new RuntimeException("Couldn't find cached PlaylistEntry.");
+        }
+        int position = mIndex.indexOf(index);
+        return position + 1 < mIndex.size();
     }
 
     /**
      * @return true, if the {@link Playlist} has a previous {@link PlaylistEntry}, otherwise false
      */
     public boolean hasPreviousEntry(PlaylistEntry entry) {
-        return getPreviousEntry(entry) != null;
+        Index index = mCachedEntries.get(entry);
+        if (index == null) {
+            throw new RuntimeException("Couldn't find cached PlaylistEntry.");
+        }
+        int position = mIndex.indexOf(index);
+        return position - 1 >= 0;
     }
 
     /**
-     * Return the current count of querys in the {@link Playlist}
+     * Return the current count of entries in the {@link Playlist}
      */
     public int size() {
-        return mEntries.size();
+        return mIndex.size();
     }
 
     /**
-     * Return all PlaylistEntries in the {@link Playlist}
+     * Return all PlaylistEntries in the {@link Playlist}. This is a very costly operation and
+     * should only be done if absolutely necessary. Consider using {@link #getEntryAtPos(int)}.
      */
-    public ArrayList<PlaylistEntry> getEntries() {
-        return mEntries;
-    }
-
-    /**
-     * Add an {@link ArrayList} of {@link PlaylistEntry}s at the given position
-     */
-    public void addEntries(int position, ArrayList<PlaylistEntry> entries) {
-        mEntries.addAll(position, entries);
-    }
-
-    /**
-     * Add an {@link ArrayList} of {@link PlaylistEntry}s at the given position
-     */
-    public void addEntries(ArrayList<PlaylistEntry> entries) {
-        mEntries.addAll(entries);
-    }
-
-    /**
-     * Append {@link Query} at the end of this playlist
-     */
-    public void addQuery(Query query) {
-        mEntries.add(PlaylistEntry.get(mId, query,
-                TomahawkMainActivity.getLifetimeUniqueStringId()));
-    }
-
-    /**
-     * Append an {@link ArrayList} of {@link Query}s at the end of this playlist
-     */
-    public void addQueries(ArrayList<Query> queries) {
-        ArrayList<PlaylistEntry> playlistEntries = new ArrayList<>();
-        for (Query query : queries) {
-            playlistEntries.add(PlaylistEntry.get(mId, query,
-                    TomahawkMainActivity.getLifetimeUniqueStringId()));
+    public List<PlaylistEntry> getEntries() {
+        List<PlaylistEntry> entries = new ArrayList<>();
+        for (Index index : mIndex) {
+            PlaylistEntry entry = getEntry(index);
+            entries.add(entry);
+            mCachedEntries.put(entry, index);
         }
-        mEntries.addAll(playlistEntries);
+        return entries;
     }
 
     /**
-     * Remove the {@link PlaylistEntry} at the given position from this playlist
+     * Add the given {@link Query} to this {@link Playlist}
+     *
+     * @param position the position at which to insert the given {@link Query}
+     * @param query    the {@link Query} to add
+     * @return the {@link PlaylistEntry} that got created and added to this {@link Playlist}
      */
-    public void deleteEntryAtPos(int position) {
-        mEntries.remove(position);
+    public PlaylistEntry addQuery(int position, Query query) {
+        PlaylistEntry entry = PlaylistEntry.get(mId, query,
+                TomahawkMainActivity.getLifetimeUniqueStringId());
+        mAddedEntries.add(entry);
+        Index index = new Index(mAddedEntries.size() - 1, true);
+        mIndex.add(position, index);
+        mCachedEntries.put(entry, index);
+        return entry;
     }
 
     /**
      * Remove the given {@link Query} from this playlist
      */
     public boolean deleteEntry(PlaylistEntry entry) {
-        return mEntries.remove(entry);
-    }
-
-    /**
-     * @return always null. This method needed to comply to the {@link TomahawkListItem} interface.
-     */
-    @Override
-    public Artist getArtist() {
-        return null;
-    }
-
-    /**
-     * @return always null. This method needed to comply to the {@link TomahawkListItem} interface.
-     */
-    @Override
-    public Album getAlbum() {
-        return null;
-    }
-
-    @Override
-    public ArrayList<Query> getQueries() {
-        ArrayList<Query> queries = new ArrayList<>();
-        for (PlaylistEntry entry : mEntries) {
-            queries.add(entry.getQuery());
+        Index index = mCachedEntries.get(entry);
+        if (index == null) {
+            Log.d(TAG, "deleteEntry - couldn't find cached PlaylistEntry.");
         }
-        return queries;
-    }
-
-    @Override
-    public Image getImage() {
-        return null;
+        return mIndex.remove(index);
     }
 
     public long getCount() {
@@ -405,24 +406,17 @@ public class Playlist implements TomahawkListItem {
         mIsFilled = isFilled;
     }
 
-    public PlaylistEntry getEntryWithQuery(Query query) {
-        for (PlaylistEntry entry : mEntries) {
-            if (entry.getQuery().equals(query)) {
-                return entry;
-            }
-        }
-        return null;
-    }
-
     public PlaylistEntry getEntryAtPos(int position) {
-        if (position < mEntries.size()) {
-            return mEntries.get(position);
+        if (position < 0 || position >= mIndex.size()) {
+            return null;
         }
-        return null;
+        Index index = mIndex.get(position);
+        return getEntry(index);
     }
 
     public int getIndexOfEntry(PlaylistEntry entry) {
-        return mEntries.indexOf(entry);
+        Index index = mCachedEntries.get(entry);
+        return mIndex.indexOf(index);
     }
 
     public String getUserId() {
@@ -431,5 +425,29 @@ public class Playlist implements TomahawkListItem {
             return s[0];
         }
         return null;
+    }
+
+    public boolean allFromOneArtist() {
+        if (size() < 2) {
+            return true;
+        }
+        String artistname = getArtistName(0);
+        for (int i = 1; i < size(); i++) {
+            String artistNameToCompare = getArtistName(i);
+            if (artistNameToCompare.equals(artistname)) {
+                return false;
+            }
+            artistname = artistNameToCompare;
+        }
+        return true;
+    }
+
+    public String getArtistName(int position) {
+        Index index = mIndex.get(position);
+        if (index.mFromMergedItems) {
+            return mAddedEntries.get(index.mIndex).getArtist().getName();
+        } else {
+            return mCursor.getArtistName(index.mIndex);
+        }
     }
 }

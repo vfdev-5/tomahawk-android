@@ -20,9 +20,10 @@ package org.tomahawk.tomahawk_android.views;
 import org.tomahawk.libtomahawk.collection.Collection;
 import org.tomahawk.libtomahawk.resolver.PipeLine;
 import org.tomahawk.libtomahawk.resolver.Resolver;
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
+import org.tomahawk.tomahawk_android.utils.OnSizeChangedListener;
 
 import android.animation.Animator;
 import android.animation.ObjectAnimator;
@@ -61,6 +62,10 @@ public class FancyDropDown extends FrameLayout {
 
     public String mText;
 
+    private OnSizeChangedListener mOnSizeChangedListener;
+
+    private boolean mCanBeVisible = false;
+
     public static class DropDownItemInfo {
 
         public String mText;
@@ -91,15 +96,12 @@ public class FancyDropDown extends FrameLayout {
         inflate(getContext(), R.layout.fancydropdown, this);
     }
 
-    public void setup(String text) {
-        setup(0, text, null, null);
-    }
-
     public void setup(int initialSelection, String selectedText,
             List<DropDownItemInfo> dropDownItemInfos, DropDownListener dropDownListener) {
         mListener = dropDownListener;
         mText = selectedText;
         ((TextView) findViewById(R.id.textview_selected)).setText(mText);
+        mCanBeVisible = true;
 
         if (dropDownItemInfos != null && dropDownItemInfos.size() > 0) {
             // Do we really need to update? Do the new infos differ from the old ones?
@@ -148,16 +150,15 @@ public class FancyDropDown extends FrameLayout {
                     itemsContainer.addView(frameLayout);
                     mItemFrames.put(position, frameLayout);
                 }
-                TomahawkUtils.afterViewGlobalLayout(
-                        new TomahawkUtils.ViewRunnable(mItemFrames.get(0)) {
-                            @Override
-                            public void run() {
-                                mItemHeight = mItemFrames.get(0).getHeight();
-                                for (int i = 0; i < mItemFrames.size(); i++) {
-                                    mItemFrames.get(i).getChildAt(0).setY(mItemHeight * -1);
-                                }
-                            }
-                        });
+                ViewUtils.afterViewGlobalLayout(new ViewUtils.ViewRunnable(mItemFrames.get(0)) {
+                    @Override
+                    public void run() {
+                        mItemHeight = mItemFrames.get(0).getHeight();
+                        for (int i = 0; i < mItemFrames.size(); i++) {
+                            mItemFrames.get(i).getChildAt(0).setY(mItemHeight * -1);
+                        }
+                    }
+                });
             }
         }
         findViewById(R.id.selected_item_container).setOnClickListener(new OnClickListener() {
@@ -286,15 +287,32 @@ public class FancyDropDown extends FrameLayout {
                 dropDownItemInfo.mText = TomahawkApp.getContext().getString(R.string.all);
             } else if (TomahawkApp.PLUGINNAME_USERCOLLECTION.equals(collection.getId())) {
                 dropDownItemInfo.mText = TomahawkApp.getContext().getString(R.string.local);
-                dropDownItemInfo.mResolver = PipeLine.getInstance()
+                dropDownItemInfo.mResolver = PipeLine.get()
                         .getResolver(TomahawkApp.PLUGINNAME_USERCOLLECTION);
             } else {
-                Resolver resolver = PipeLine.getInstance().getResolver(collection.getId());
+                Resolver resolver = PipeLine.get().getResolver(collection.getId());
                 dropDownItemInfo.mText = resolver.getId();
                 dropDownItemInfo.mResolver = resolver;
             }
             dropDownItemInfos.add(dropDownItemInfo);
         }
         return dropDownItemInfos;
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+
+        if (mCanBeVisible) {
+            setVisibility(VISIBLE);
+        }
+
+        if (mOnSizeChangedListener != null) {
+            mOnSizeChangedListener.onSizeChanged(w, h, oldw, oldh);
+        }
+    }
+
+    public void setOnSizeChangedListener(OnSizeChangedListener listener) {
+        mOnSizeChangedListener = listener;
     }
 }

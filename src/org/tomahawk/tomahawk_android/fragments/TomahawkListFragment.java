@@ -18,13 +18,10 @@
  */
 package org.tomahawk.tomahawk_android.fragments;
 
-import org.tomahawk.libtomahawk.utils.TomahawkUtils;
+import org.tomahawk.libtomahawk.utils.ViewUtils;
 import org.tomahawk.tomahawk_android.R;
 import org.tomahawk.tomahawk_android.TomahawkApp;
 import org.tomahawk.tomahawk_android.adapters.StickyBaseAdapter;
-import org.tomahawk.tomahawk_android.adapters.TomahawkListAdapter;
-import org.tomahawk.tomahawk_android.utils.TomahawkListItem;
-import org.tomahawk.tomahawk_android.views.FancyDropDown;
 
 import android.content.Context;
 import android.os.Bundle;
@@ -37,8 +34,6 @@ import android.view.ViewGroup;
 import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.FrameLayout;
-
-import java.util.List;
 
 import de.greenrobot.event.EventBus;
 import se.emilsjolander.stickylistheaders.StickyListHeadersListView;
@@ -59,9 +54,9 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
 
     private boolean restoreScrollPosition = true;
 
-    final private Handler mHandler = new Handler();
+    private final Handler mHandler = new Handler();
 
-    final private Runnable mRequestFocus = new Runnable() {
+    private final Runnable mRequestFocus = new Runnable() {
         public void run() {
             mList.focusableViewAvailable(mList);
         }
@@ -195,7 +190,8 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
     @SuppressWarnings("unused")
     public void onEvent(RequestSyncEvent event) {
         if (mContainerFragmentId == event.mContainerFragmentId
-                && mContainerFragmentPage == event.mPerformerFragmentPage) {
+                && mContainerFragmentPage == event.mPerformerFragmentPage
+                && getListView() != null) {
             PerformSyncEvent performSyncEvent = new PerformSyncEvent();
             performSyncEvent.mContainerFragmentId = event.mContainerFragmentId;
             performSyncEvent.mContainerFragmentPage = event.mReceiverFragmentPage;
@@ -208,27 +204,13 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
     @SuppressWarnings("unused")
     public void onEventMainThread(PerformSyncEvent event) {
         if (mContainerFragmentId == event.mContainerFragmentId
-                && mContainerFragmentPage == event.mContainerFragmentPage) {
+                && mContainerFragmentPage == event.mContainerFragmentPage
+                && getListView() != null) {
             if (event.mFirstVisiblePosition == 0) {
                 getListView().setSelectionFromTop(0, event.mTop);
             } else if (getListView().getFirstVisiblePosition() == 0) {
                 getListView().setSelection(1);
             }
-        }
-    }
-
-    protected void showFancyDropDown(TomahawkListItem item) {
-        if (mContainerFragmentClass == null) {
-            super.showFancyDropDown(item.getName().toUpperCase());
-        }
-    }
-
-    protected void showFancyDropDown(TomahawkListItem item, int initialSelection,
-            List<FancyDropDown.DropDownItemInfo> dropDownItemInfos,
-            FancyDropDown.DropDownListener dropDownListener) {
-        if (mContainerFragmentClass == null) {
-            super.showFancyDropDown(initialSelection, item.getName().toUpperCase(),
-                    dropDownItemInfos, dropDownListener);
         }
     }
 
@@ -242,19 +224,6 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
         if (mContainerFragmentClass == null) {
             super.setupAnimations();
         }
-    }
-
-    protected void setupNonScrollableSpacer() {
-        setupNonScrollableSpacer(getListView());
-    }
-
-    protected void setupScrollableSpacer() {
-        setupScrollableSpacer(null);
-    }
-
-    protected void setupScrollableSpacer(View headerSpacerForwardView) {
-        setupScrollableSpacer((TomahawkListAdapter) getListAdapter(), getListView(),
-                headerSpacerForwardView);
     }
 
     /**
@@ -283,7 +252,7 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
             Log.e(TAG, "Couldn't inflate listview! layoutInflater is null");
             return;
         }
-        View view = TomahawkUtils.ensureInflation(root, R.id.listview_stub, R.id.listview);
+        View view = ViewUtils.ensureInflation(root, R.id.listview_stub, R.id.listview);
         if (view instanceof StickyListHeadersListView) {
             mList = (StickyListHeadersListView) view;
         }
@@ -299,8 +268,11 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
     /**
      * @return the current scrolling position of the list- or gridView
      */
-    public Parcelable getListState() {
-        return getListView().getWrappedList().onSaveInstanceState();
+    private Parcelable getListState() {
+        if (getListView() != null) {
+            return getListView().getWrappedList().onSaveInstanceState();
+        }
+        return null;
     }
 
     /**
@@ -315,9 +287,11 @@ public abstract class TomahawkListFragment extends ContentHeaderFragment impleme
      */
     public void setListAdapter(StickyBaseAdapter adapter) {
         mStickyBaseAdapter = adapter;
-        getListView().setAdapter(adapter);
-        if (restoreScrollPosition && mListState != null) {
-            getListView().getWrappedList().onRestoreInstanceState(mListState);
+        if (getListView() != null) {
+            getListView().setAdapter(adapter);
+            if (restoreScrollPosition && mListState != null) {
+                getListView().getWrappedList().onRestoreInstanceState(mListState);
+            }
         }
     }
 
